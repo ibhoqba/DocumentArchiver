@@ -2,21 +2,15 @@ using DocumentArchiever.Services;
 using NTwain;
 using NTwain.Data;
 using NTwain.Events;
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Drawing;
 using System.Drawing.Imaging;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace DocumentArchiever.Core.Scanning
 {
     public class TwainScanner : IScanner
     {
+        private readonly TwainStaThread _twainThread;
         private TwainAppSession _twainSession;
         private TWIdentityWrapper _currentSource;
         private bool _isScanning;
@@ -24,10 +18,16 @@ namespace DocumentArchiever.Core.Scanning
         private List<string> _scannedImages;
         private ScanOptions _currentOptions;
         private readonly ILogger _logger;
-        private TaskCompletionSource<bool> _scanCompletionSource;
+        private TaskCompletionSource<bool> _sourceDisabledTcs;
+        private TaskCompletionSource<bool> _transfersCompletedTcs;
         private readonly ImageCodecInfo _jpegEncoder;
         private readonly EncoderParameters _jpegParameters;
         private readonly int _jpegQuality = 75;
+        private readonly object _transferSync = new();
+        private Task _transferProcessingChain = Task.CompletedTask;
+        private int _activeTransfers;
+        private bool _sourceDisabledRaised;
+        private bool _isDisposed;
 
         public event EventHandler<ImageScannedEventArgs> ImageScanned;
         public event EventHandler<ScanProgressEventArgs> ScanProgress;
@@ -38,26 +38,35 @@ namespace DocumentArchiever.Core.Scanning
         public bool IsConnected => _twainSession != null && _twainSession.State >= STATE.S4;
         public string Name => "TWAIN Scanner";
 
+
         public TwainScanner(ILogger logger)
         {
             _logger = logger;
+            _twainThread = new TwainStaThread();
             _scannedImages = new List<string>();
+
+            // Diagnostics: log instance identity
+
+            //try
+            //{
+            //    _logger.LogInfo($"TwainScanner instance created. Hash: {this.GetHashCode()}");
+            //}
+            //catch { }
 
             // Setup JPEG encoder for saving images
             _jpegParameters = new EncoderParameters(1);
             _jpegParameters.Param[0] = new EncoderParameter(Encoder.Quality, (long)_jpegQuality);
             _jpegEncoder = ImageCodecInfo.GetImageEncoders().First(enc => enc.FormatID == ImageFormat.Jpeg.Guid);
         }
-
         public Task<List<ScannerInfo>> GetAvailableScannersAsync()
         {
-            var scanners = new List<ScannerInfo>();
-
-            try
+            return _twainThread.InvokeAsync(() =>
             {
-                // Create a temporary session to enumerate scanners
-                using (var tempSession = new TwainAppSession(appThreadContext: SynchronizationContext.Current))
+                var scanners = new List<ScannerInfo>();
+
+                try
                 {
+                    using var tempSession = new TwainAppSession(appThreadContext: SynchronizationContext.Current);
                     tempSession.OpenDsm();
 
                     var dataSources = tempSession.GetSources();
@@ -77,169 +86,136 @@ namespace DocumentArchiever.Core.Scanning
 
                     tempSession.CloseDsm();
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error enumerating TWAIN scanners");
-            }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error enumerating TWAIN scanners");
+                }
 
-            return Task.FromResult(scanners);
+                return scanners;
+            });
         }
 
-        public Task<bool> ConnectAsync(ScannerInfo scanner, CancellationToken cancellationToken = default)
+        public async Task<bool> ConnectAsync(ScannerInfo scanner, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             try
             {
-                DisconnectAsync().Wait();
-
-                // Create the TwainAppSession with current synchronization context
-                _twainSession = new TwainAppSession(appThreadContext: SynchronizationContext.Current);
-
-                // Attach event handlers
-                _twainSession.StateChanged += OnStateChanged;
-                _twainSession.SourceDisabled += OnSourceDisabled;
-                _twainSession.TransferReady += OnTransferReady;
-                _twainSession.Transferred += OnTransferred;
-                _twainSession.TransferError += OnTransferError;
-
-                // Open the DSM (Data Source Manager)
-                var result = _twainSession.OpenDsm();
-                if (result.RC != TWRC.SUCCESS)
+                return await _twainThread.InvokeAsync(() =>
                 {
-                    _logger.LogError($"Failed to open DSM: {result}");
-                    return Task.FromResult(false);
-                }
+                    DisconnectInternal();
 
-                // Get the selected source
-                var dataSources = _twainSession.GetSources();
-                var selectedSource = dataSources.FirstOrDefault(ds => ds.ProductName == scanner.Name);
+                    _twainSession = new TwainAppSession(appThreadContext: SynchronizationContext.Current);
 
-                if (selectedSource == null)
-                {
-                    _logger.LogError($"Scanner {scanner.Name} not found");
-                    return Task.FromResult(false);
-                }
+                    _twainSession.StateChanged += OnStateChanged;
+                    _twainSession.SourceDisabled += OnSourceDisabled;
+                    _twainSession.TransferReady += OnTransferReady;
+                    _twainSession.Transferred += OnTransferred;
+                    _twainSession.TransferError += OnTransferError;
 
-                // Open the source
-                result = _twainSession.OpenSource(selectedSource);
-                if (result.RC != TWRC.SUCCESS)
-                {
-                    _logger.LogError($"Failed to open source: {result}");
-                    return Task.FromResult(false);
-                }
+                    var result = _twainSession.OpenDsm();
+                    if (result.RC != TWRC.SUCCESS)
+                    {
+                        _logger.LogError($"Failed to open DSM: {result}");
+                        DisconnectInternal();
+                        return false;
+                    }
 
-                _currentSource = selectedSource;
+                    var dataSources = _twainSession.GetSources();
+                    var selectedSource = dataSources.FirstOrDefault(ds => ds.ProductName == scanner.Name);
 
-                return Task.FromResult(true);
+                    if (selectedSource == null)
+                    {
+                        _logger.LogError($"Scanner {scanner.Name} not found");
+                        DisconnectInternal();
+                        return false;
+                    }
+
+                    result = _twainSession.OpenSource(selectedSource);
+                    if (result.RC != TWRC.SUCCESS)
+                    {
+                        _logger.LogError($"Failed to open source: {result}");
+                        DisconnectInternal();
+                        return false;
+                    }
+
+                    _currentSource = selectedSource;
+                    return true;
+                }).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to connect to TWAIN scanner");
                 ScanError?.Invoke(this, new ScanErrorEventArgs { Exception = ex, Message = ex.Message, IsFatal = true });
-                return Task.FromResult(false);
+                return false;
             }
         }
 
-        public Task DisconnectAsync()
+        public async Task DisconnectAsync()
         {
             try
             {
-                if (_twainSession != null)
-                {
-                    // Close source if open
-                    if (_twainSession.State >= STATE.S4)
-                    {
-                        _twainSession.CloseSource();
-                    }
-
-                    // Close DSM
-                    if (_twainSession.State >= STATE.S3)
-                    {
-                        _twainSession.CloseDsm();
-                    }
-
-                    _twainSession.Dispose();
-                    _twainSession = null;
-                }
-
-                _currentSource = null;
+                await _twainThread.InvokeAsync(DisconnectInternal).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error disconnecting TWAIN scanner");
             }
-
-            return Task.CompletedTask;
         }
-        /*
-        public Task StartScanningAsync(ScanOptions options, CancellationToken cancellationToken = default)
-        {
-            if (_twainSession == null || _twainSession.State < STATE.S4)
-            {
-                throw new InvalidOperationException("Scanner not connected");
-            }
-
-            _isScanning = true;
-            _currentOptions = options;
-            _pageCounter = 0;
-            _scannedImages.Clear();
-            _scanCompletionSource = new TaskCompletionSource<bool>();
-
-            // Configure scanner settings
-            ConfigureScanner(options);
-
-            // Enable the source to start scanning
-            // Use NoUI for automatic scanning without dialog
-            var enableResult = _twainSession.EnableSource(SourceEnableOption.NoUI);
-
-            if (!enableResult.IsSuccess)
-            {
-                _isScanning = false;
-                throw new InvalidOperationException($"Failed to enable source: {enableResult}");
-            }
-
-            return Task.CompletedTask;
-        }*/
         public async Task StartScanningAsync(ScanOptions options, CancellationToken cancellationToken = default)
         {
-            if (_twainSession == null || _twainSession.State < STATE.S4)
+            cancellationToken.ThrowIfCancellationRequested();
+
+            await _twainThread.InvokeAsync(() =>
             {
-                throw new InvalidOperationException("Scanner not connected");
-            }
+                if (_twainSession == null || _twainSession.State < STATE.S4)
+                {
+                    throw new InvalidOperationException("Scanner not connected");
+                }
 
-            _isScanning = true;
-            _currentOptions = options;
-            _pageCounter = 0;
-            _scannedImages.Clear();
-            _scanCompletionSource = new TaskCompletionSource<bool>();
+                _isScanning = true;
+                _currentOptions = options;
+                _pageCounter = 0;
+                _scannedImages.Clear();
+                _sourceDisabledRaised = false;
+                _activeTransfers = 0;
+                _sourceDisabledTcs = CreateCompletionSource();
+                _transfersCompletedTcs = CreateCompletionSource(completed: true);
 
-            // Configure scanner settings
-            ConfigureScanner(options);
+                ConfigureScanner(options);
 
-            // Enable the source to start scanning
-            var enableResult = _twainSession.EnableSource(SourceEnableOption.NoUI);
+                var enableResult = _twainSession.EnableSource(SourceEnableOption.NoUI);
+                if (!enableResult.IsSuccess)
+                {
+                    _isScanning = false;
+                    throw new InvalidOperationException($"Failed to enable source: {enableResult}");
+                }
+            }).ConfigureAwait(false);
 
-            if (!enableResult.IsSuccess)
-            {
-                _isScanning = false;
-                throw new InvalidOperationException($"Failed to enable source: {enableResult}");
-            }
+            using var registration = cancellationToken.Register(() => _ = StopScanningAsync());
 
-            // Wait for scanning to complete
-            await _scanCompletionSource.Task;
+            await _sourceDisabledTcs.Task.ConfigureAwait(false);
+            await _transfersCompletedTcs.Task.ConfigureAwait(false);
         }
-        public Task StopScanningAsync()
+        public async Task StopScanningAsync()
         {
             _isScanning = false;
 
-            if (_twainSession != null && _twainSession.State >= STATE.S4)
+            try
             {
-                _twainSession.CloseSource();
+                await _twainThread.InvokeAsync(() =>
+                {
+                    if (_twainSession != null && _twainSession.State >= STATE.S4)
+                    {
+                        _twainSession.CloseSource();
+                    }
+                }).ConfigureAwait(false);
             }
-
-            _scanCompletionSource?.TrySetResult(true);
-
-            return Task.CompletedTask;
+            finally
+            {
+                _sourceDisabledTcs?.TrySetResult(true);
+                _transfersCompletedTcs?.TrySetResult(true);
+            }
         }
 
         private void ConfigureScanner(ScanOptions options)
@@ -265,7 +241,7 @@ namespace DocumentArchiever.Core.Scanning
 
                 // Set color mode
                 //  a_twimageinfo.PixelType = short.Parse(CvtCapValueFromEnum(CAP.ICAP_PIXELTYPE, asz[14]));
-               //Tw_P
+                //Tw_P
                 //TW_PIXELTYPE pixelType = options.ColorMode == ColorMode.Color ? TW_PIXELTYPE.RGB :
                 //                         options.ColorMode == ColorMode.Grayscale ? TW_PIXELTYPE.GRAY :
                 //                         TW_PIXELTYPE.BW;
@@ -308,49 +284,79 @@ namespace DocumentArchiever.Core.Scanning
 
         private void OnTransferred(object sender, TransferredEventArgs e)
         {
-            _logger.LogInfo($"[Thread {Environment.CurrentManagedThreadId}] Data transferred");
-
             try
             {
-
-                // Process the image data - either take ownership or use directly
+                byte[] imageBytes = null;
                 using (var data = e.TakeDataOwnership())
                 {
                     if (data != null)
                     {
-                        string tempPath = Path.Combine(Path.GetTempPath(), $"scan_{DateTime.Now.Ticks}_{_pageCounter}.jpg");
-
-                        // Save the image using System.Drawing
-                        using (var img = Image.FromStream(data.AsStream()))
-                        {
-                            // Reduce resolution if needed
-                            using (var reducedImage = ReduceResolution((Bitmap)img, _currentOptions.Dpi))
-                            {
-                                reducedImage.Save(tempPath, _jpegEncoder, _jpegParameters);
-                            }
-                        }
-
-                        _scannedImages.Add(tempPath);
-
-                        bool isFrontSide = _pageCounter % 2 == 0;
-
-                        ImageScanned?.Invoke(this, new ImageScannedEventArgs
-                        {
-                            ImagePath = tempPath,
-                            PageNumber = _pageCounter + 1,
-                            IsFrontSide = isFrontSide,
-                            ScannedAt = DateTime.Now
-                        });
-
-                        _pageCounter++;
+                        using var stream = data.AsStream();
+                        using var memory = new MemoryStream();
+                        stream.CopyTo(memory);
+                        imageBytes = memory.ToArray();
                     }
                 }
+
+                if (imageBytes == null || imageBytes.Length == 0)
+                {
+                    return;
+                }
+
+                BeginTransferProcessing();
+                QueueTransferProcessing(imageBytes);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing TWAIN data transfer");
                 ScanError?.Invoke(this, new ScanErrorEventArgs { Exception = ex, Message = ex.Message });
             }
+        }
+
+        private Task ProcessTransferredImageAsync(byte[] imageBytes)
+        {
+            try
+            {
+                string tempPath = Path.Combine(Path.GetTempPath(), $"scan_{DateTime.Now.Ticks}_{_pageCounter}.jpg");
+
+                using (var memory = new MemoryStream(imageBytes))
+                using (var img = Image.FromStream(memory))
+                {
+                    using var reducedImage = ReduceResolution((Bitmap)img, _currentOptions.Dpi);
+                    reducedImage.Save(tempPath, _jpegEncoder, _jpegParameters);
+                }
+
+                _scannedImages.Add(tempPath);
+                bool isFrontSide = _pageCounter % 2 == 0;
+
+                try
+                {
+                    ImageScanned?.Invoke(this, new ImageScannedEventArgs
+                    {
+                        ImagePath = tempPath,
+                        PageNumber = _pageCounter + 1,
+                        IsFrontSide = isFrontSide,
+                        ScannedAt = DateTime.Now
+                    });
+                }
+                catch (Exception subEx)
+                {
+                    _logger.LogError(subEx, "[TwainScanner] Exception thrown by ImageScanned subscriber");
+                }
+
+                _pageCounter++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing TWAIN data transfer");
+                ScanError?.Invoke(this, new ScanErrorEventArgs { Exception = ex, Message = ex.Message });
+            }
+            finally
+            {
+                CompleteTransferProcessing();
+            }
+
+            return Task.CompletedTask;
         }
 
         private Bitmap ReduceResolution(Bitmap original, int targetDpi)
@@ -375,7 +381,7 @@ namespace DocumentArchiever.Core.Scanning
 
         private void OnTransferReady(object sender, TransferReadyEventArgs e)
         {
-            Debug.WriteLine($"[Thread {Environment.CurrentManagedThreadId}] Transfer ready");
+            //  Debug.WriteLine($"[Thread {Environment.CurrentManagedThreadId}] Transfer ready");
 
             ScanProgress?.Invoke(this, new ScanProgressEventArgs
             {
@@ -386,7 +392,7 @@ namespace DocumentArchiever.Core.Scanning
 
         private void OnTransferError(object sender, TransferErrorEventArgs e)
         {
-            Debug.WriteLine($"[Thread {Environment.CurrentManagedThreadId}] Transfer error: {e.Exception?.Message ?? e.Code.ToString()}");
+            //Debug.WriteLine($"[Thread {Environment.CurrentManagedThreadId}] Transfer error: {e.Exception?.Message ?? e.Code.ToString()}");
 
             _logger.LogError(e.Exception, "TWAIN transfer error");
             ScanError?.Invoke(this, new ScanErrorEventArgs
@@ -398,10 +404,10 @@ namespace DocumentArchiever.Core.Scanning
 
         private void OnSourceDisabled(object sender, TWIdentityWrapper e)
         {
-            Debug.WriteLine($"Source disabled");
-
             _isScanning = false;
-            _scanCompletionSource?.TrySetResult(true);
+            _sourceDisabledRaised = true;
+            _sourceDisabledTcs?.TrySetResult(true);
+            TryCompleteTransfers();
 
             ScanCompleted?.Invoke(this, new ScanCompletedEventArgs
             {
@@ -413,14 +419,201 @@ namespace DocumentArchiever.Core.Scanning
 
         private void OnStateChanged(object sender, STATE state)
         {
-            Debug.WriteLine($"State changed to: {state}");
+            //  Debug.WriteLine($"State changed to: {state}");
             _logger.LogInfo($"TWAIN State: {state}");
         }
 
         public void Dispose()
         {
-            DisconnectAsync().Wait(5000);
+            if (_isDisposed)
+            {
+                return;
+            }
+
+            _isDisposed = true;
             _jpegParameters?.Dispose();
+            _ = DisconnectAsync();
+            _twainThread.Dispose();
+        }
+
+        private void DisconnectInternal()
+        {
+            if (_twainSession != null)
+            {
+                _twainSession.StateChanged -= OnStateChanged;
+                _twainSession.SourceDisabled -= OnSourceDisabled;
+                _twainSession.TransferReady -= OnTransferReady;
+                _twainSession.Transferred -= OnTransferred;
+                _twainSession.TransferError -= OnTransferError;
+
+                if (_twainSession.State >= STATE.S4)
+                {
+                    _twainSession.CloseSource();
+                }
+
+                if (_twainSession.State >= STATE.S3)
+                {
+                    _twainSession.CloseDsm();
+                }
+
+                _twainSession.Dispose();
+                _twainSession = null;
+            }
+
+            _currentSource = null;
+            _isScanning = false;
+            _sourceDisabledTcs?.TrySetResult(true);
+            _transfersCompletedTcs?.TrySetResult(true);
+        }
+
+        private static TaskCompletionSource<bool> CreateCompletionSource(bool completed = false)
+        {
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (completed)
+            {
+                tcs.TrySetResult(true);
+            }
+
+            return tcs;
+        }
+
+        private void BeginTransferProcessing()
+        {
+            lock (_transferSync)
+            {
+                if (_activeTransfers == 0)
+                {
+                    _transfersCompletedTcs = CreateCompletionSource();
+                }
+
+                _activeTransfers++;
+            }
+        }
+
+        private void QueueTransferProcessing(byte[] imageBytes)
+        {
+            lock (_transferSync)
+            {
+                _transferProcessingChain = _transferProcessingChain.ContinueWith(
+                    _ => ProcessTransferredImageAsync(imageBytes),
+                    CancellationToken.None,
+                    TaskContinuationOptions.None,
+                    TaskScheduler.Default).Unwrap();
+            }
+        }
+
+        private void CompleteTransferProcessing()
+        {
+            lock (_transferSync)
+            {
+                if (_activeTransfers > 0)
+                {
+                    _activeTransfers--;
+                }
+            }
+
+            TryCompleteTransfers();
+        }
+
+        private void TryCompleteTransfers()
+        {
+            lock (_transferSync)
+            {
+                if (_sourceDisabledRaised && _activeTransfers == 0)
+                {
+                    _transfersCompletedTcs?.TrySetResult(true);
+                }
+            }
+        }
+
+        private sealed class TwainStaThread : IDisposable
+        {
+            private readonly Thread _thread;
+            private readonly TaskCompletionSource<SynchronizationContext> _readyTcs =
+                new(TaskCreationOptions.RunContinuationsAsynchronously);
+            private SynchronizationContext _context;
+            private bool _disposed;
+
+            public TwainStaThread()
+            {
+                _thread = new Thread(ThreadMain)
+                {
+                    IsBackground = true,
+                    Name = "Twain STA Thread"
+                };
+                _thread.SetApartmentState(ApartmentState.STA);
+                _thread.Start();
+            }
+
+            public async Task InvokeAsync(Action action)
+            {
+                ArgumentNullException.ThrowIfNull(action);
+                var context = await GetContextAsync().ConfigureAwait(false);
+                var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+                context.Post(_ =>
+                {
+                    try
+                    {
+                        action();
+                        tcs.TrySetResult(true);
+                    }
+                    catch (Exception ex)
+                    {
+                        tcs.TrySetException(ex);
+                    }
+                }, null);
+
+                await tcs.Task.ConfigureAwait(false);
+            }
+
+            public async Task<T> InvokeAsync<T>(Func<T> func)
+            {
+                ArgumentNullException.ThrowIfNull(func);
+                var context = await GetContextAsync().ConfigureAwait(false);
+                var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+                context.Post(_ =>
+                {
+                    try
+                    {
+                        tcs.TrySetResult(func());
+                    }
+                    catch (Exception ex)
+                    {
+                        tcs.TrySetException(ex);
+                    }
+                }, null);
+
+                return await tcs.Task.ConfigureAwait(false);
+            }
+
+            public void Dispose()
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
+                if (_context != null)
+                {
+                    _context.Post(_ => Application.ExitThread(), null);
+                }
+            }
+
+            private async Task<SynchronizationContext> GetContextAsync()
+            {
+                return _context ?? await _readyTcs.Task.ConfigureAwait(false);
+            }
+
+            private void ThreadMain()
+            {
+                SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+                _context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+                _readyTcs.TrySetResult(_context);
+                Application.Run();
+            }
         }
     }
 }

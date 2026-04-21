@@ -121,7 +121,7 @@ namespace DocumentArchiever.Properties {
         
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
-        [global::System.Configuration.DefaultSettingValueAttribute("18")]
+        [global::System.Configuration.DefaultSettingValueAttribute("9")]
         public int LastDocumentType {
             get {
                 return ((int)(this["LastDocumentType"]));

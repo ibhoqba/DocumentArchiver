@@ -1,11 +1,5 @@
-using DocumentArchiever.Services;
-using System;
-using System.Drawing;
-using System.Drawing.Imaging;
-using System.IO;
+Ôªøusing DocumentArchiever.Services;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
-using System.Windows.Forms;
 using Tesseract;
 
 namespace DocumentArchiever.Core.OCR
@@ -14,11 +8,15 @@ namespace DocumentArchiever.Core.OCR
     {
         private static readonly string TessDataPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tessdata");
         private readonly ILogger _logger;
+        private readonly SemaphoreSlim _engineLock = new SemaphoreSlim(1, 1);
         private TesseractEngine _arabicEngine;
         private TesseractEngine _englishEngine;
         private bool _disposed;
-        public static int ExpressNumber =599;
-         public  TesseractOcrEngine(ILogger logger)
+
+        public static int ExpressNumber = 599;
+        private static readonly Regex ExpressRegex = new Regex(@"599\d{6}", RegexOptions.Compiled);
+
+        public TesseractOcrEngine(ILogger logger)
         {
             _logger = logger;
         }
@@ -52,48 +50,75 @@ namespace DocumentArchiever.Core.OCR
 
         public async Task<string> ExtractTextAsync(string imagePath)
         {
-            return await Task.Run(() =>
+            await _engineLock.WaitAsync();
+            try
             {
-                EnsureEnginesInitialized();
+                return await Task.Run(() =>
+                {
+                    EnsureEnginesInitialized();
 
-                try
-                {
-                    using (var img = Pix.LoadFromFile(imagePath))
-                    using (var page = _arabicEngine.Process(img))
+                    try
                     {
-                        return page.GetText().Trim();
+                        using (var img = Pix.LoadFromFile(imagePath))
+                        using (var page = _arabicEngine.Process(img))
+                        {
+                            return page.GetText().Trim();
+                        }
                     }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, $"OCR failed for {imagePath}");
-                    return string.Empty;
-                }
-            });
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"OCR failed for {imagePath}");
+                        return string.Empty;
+                    }
+                });
+            }
+            finally
+            {
+                _engineLock.Release();
+            }
         }
-       
+
         public async Task<string> ExtractExpressNumberAsync(string imagePath)
         {
-            return await Task.Run(() =>
+            await _engineLock.WaitAsync();
+            try
             {
-                EnsureEnginesInitialized();
+                string result = await Task.Run(() =>
+                {
+                    EnsureEnginesInitialized();
 
-                try
-                {
-                    using (var img = Pix.LoadFromFile(imagePath))
-                    using (var page = _englishEngine.Process(img))
+                    try
                     {
-                        string text = page.GetText().Trim();
-                        var match = Regex.Match(text, @$"{ExpressNumber}\d{6}");
-                        return match.Success ? match.Value : string.Empty;
+                        _englishEngine.SetVariable("tessedit_char_whitelist", "0123456789");
+                        try
+                        {
+                            using (var img = Pix.LoadFromFile(imagePath))
+                            using (var page = _englishEngine.Process(img))
+                            {
+                                img.Save("img.jpg");
+                                string text = page.GetText().Trim();
+                                var match = ExpressRegex.Match(text);
+                                return match.Success ? match.Value : string.Empty;
+                            }
+                        }
+                        finally
+                        {
+                            _englishEngine.SetVariable("tessedit_char_whitelist", "");
+                        }
                     }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, $"Express number extraction failed for {imagePath}");
-                    return string.Empty;
-                }
-            });
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"Express number extraction failed for {imagePath}");
+                        return string.Empty;
+                    }
+                });
+
+                return result;
+            }
+            finally
+            {
+                _engineLock.Release();
+            }
         }
 
         public async Task<string> ExtractExpressNumberFromPdfAsync(string pdfPath)
@@ -109,7 +134,7 @@ namespace DocumentArchiever.Core.OCR
                         for (int i = 1; i <= Math.Min(reader.NumberOfPages, 3); i++)
                         {
                             var text = iTextSharp.text.pdf.parser.PdfTextExtractor.GetTextFromPage(reader, i);
-                            var match = Regex.Match(text, @$"{ExpressNumber}\d{6}");
+                            var match = ExpressRegex.Match(text);
                             if (match.Success)
                             {
                                 result = match.Value;
@@ -136,116 +161,152 @@ namespace DocumentArchiever.Core.OCR
         {
             return await Task.Run(() =>
             {
-                // Ghostscript extraction logic
                 return string.Empty;
             });
         }
 
         public async Task<DocumentType> IdentifyDocumentTypeAsync(string imagePath)
         {
-            return await Task.Run(() =>
+            await _engineLock.WaitAsync();
+            try
             {
-                EnsureEnginesInitialized();
-
-                try
+                return await Task.Run(() =>
                 {
-                    using (var img = Pix.LoadFromFile(imagePath))
-                    using (var page = _arabicEngine.Process(img))
+                    EnsureEnginesInitialized();
+
+                    try
                     {
-                        string text = page.GetText().ToLower();
+                        using (var img = Pix.LoadFromFile(imagePath))
+                        using (var page = _arabicEngine.Process(img))
+                        {
+                            string text = page.GetText().ToLower();
 
-                        if (Regex.IsMatch(text, @$"{ExpressNumber}\d{6}") || text.Contains("ÕÊ«·…"))
-                            return DocumentType.TransferVoucher;
+                            if (ExpressRegex.IsMatch(text) || text.Contains("ÿ≠ŸàÿßŸÑÿ©"))
+                                return DocumentType.TransferVoucher;
 
-                        if (text.Contains("»Ì‰ «·›—Ê⁄"))
-                            return DocumentType.InterBranchCash;
+                            if (text.Contains("ÿ®ŸäŸÜ ÿßŸÑŸÅÿ±Ÿàÿπ"))
+                                return DocumentType.InterBranchCash;
 
-                        if (text.Contains("⁄„·«¡ ‰ﬁœ"))
-                            return DocumentType.CashVoucher;
+                            if (text.Contains("ÿπŸÖŸÑÿßÿ° ŸÜŸÇÿØ"))
+                                return DocumentType.CashVoucher;
 
+                            return DocumentType.Unknown;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"Document type identification failed for {imagePath}");
                         return DocumentType.Unknown;
                     }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, $"Document type identification failed for {imagePath}");
-                    return DocumentType.Unknown;
-                }
-            });
+                });
+            }
+            finally
+            {
+                _engineLock.Release();
+            }
         }
-      
+
         public async Task<string> ExtractVoucherNumberAsync(string imagePath)
         {
-            return await Task.Run(() =>
+            await _engineLock.WaitAsync();
+            try
             {
-                EnsureEnginesInitialized();
-
-                try
+                string result = await Task.Run(() =>
                 {
-                    using (var image = new Bitmap(imagePath))
-                    {
-                        int cropHeight = image.Height / 4;
-                        int startY = image.Height / 2 - cropHeight / 2;
+                    EnsureEnginesInitialized();
 
-                        using (var cropped = image.Clone(new Rectangle(0, startY, image.Width, cropHeight), image.PixelFormat))
+                    try
+                    {
+                        using (var image = new Bitmap(imagePath))
+                        {
+                            int cropHeight = image.Height / 4;
+                            int startY = image.Height / 2;// - cropHeight / 2;
+
+                            using (var cropped = image.Clone(new Rectangle(0, startY, image.Width, cropHeight), image.PixelFormat))
+                            using (var ms = new MemoryStream())
+                            {
+                                cropped.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                                ms.Position = 0;
+
+                                _englishEngine.SetVariable("tessedit_char_whitelist", "0123456789");
+                                try
+                                {
+                                    using (var pix = Pix.LoadFromMemory(ms.ToArray()))
+                                    using (var deskewed = pix.Deskew())
+                                    using (var page = _englishEngine.Process(deskewed))
+                                    {
+                                        deskewed.Save("deskewed.jpg");
+                                        string numbers = page.GetText().Trim();
+                                        var match = Regex.Match(numbers, @"\d{3,8}");
+                                        return match.Success ? match.Value : string.Empty;
+                                    }
+                                }
+                                finally
+                                {
+                                    _englishEngine.SetVariable("tessedit_char_whitelist", "");
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"Voucher number extraction failed for {imagePath}");
+                        return string.Empty;
+                    }
+                });
+
+                return result;
+            }
+            finally
+            {
+                _engineLock.Release();
+            }
+        }
+
+        public async Task<string> ExtractNumberFromRegionAsync(string imagePath, OcrRegion region)
+        {
+            await _engineLock.WaitAsync();
+            try
+            {
+                return await Task.Run(() =>
+                {
+                    EnsureEnginesInitialized();
+
+                    try
+                    {
+                        using (var image = new Bitmap(imagePath))
+                        using (var cropped = image.Clone(new Rectangle(region.X, region.Y, region.Width, region.Height), image.PixelFormat))
                         using (var ms = new MemoryStream())
                         {
                             cropped.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
                             ms.Position = 0;
 
-                            using (var pix = Pix.LoadFromMemory(ms.ToArray()))
-                            using (var deskewed = pix.Deskew())
-                            using (var page = _englishEngine.Process(deskewed))
+                            _englishEngine.SetVariable("tessedit_char_whitelist", "0123456789");
+                            try
                             {
-                                _englishEngine.SetVariable("tessedit_char_whitelist", "0123456789");
-                                string numbers = page.GetText().Trim();
+                                using (var pix = Pix.LoadFromMemory(ms.ToArray()))
+                                using (var page = _englishEngine.Process(pix))
+                                {
+                                    return page.GetText().Trim();
+                                }
+                            }
+                            finally
+                            {
                                 _englishEngine.SetVariable("tessedit_char_whitelist", "");
-
-                                var match = Regex.Match(numbers, @"\d{3,8}");
-                                return match.Success ? match.Value : string.Empty;
                             }
                         }
                     }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, $"Voucher number extraction failed for {imagePath}");
-                    return string.Empty;
-                }
-            });
-        }
-
-        public async Task<string> ExtractNumberFromRegionAsync(string imagePath, OcrRegion region)
-        {
-            return await Task.Run(() =>
-            {
-                EnsureEnginesInitialized();
-
-                try
-                {
-                    using (var image = new Bitmap(imagePath))
-                    using (var cropped = image.Clone(new Rectangle(region.X, region.Y, region.Width, region.Height), image.PixelFormat))
-                    using (var ms = new MemoryStream())
+                    catch (Exception ex)
                     {
-                        cropped.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-                        ms.Position = 0;
-
-                        using (var pix = Pix.LoadFromMemory(ms.ToArray()))
-                        using (var page = _englishEngine.Process(pix))
-                        {
-                            _englishEngine.SetVariable("tessedit_char_whitelist", "0123456789");
-                            string result = page.GetText().Trim();
-                            _englishEngine.SetVariable("tessedit_char_whitelist", "");
-                            return result;
-                        }
+                        _logger.LogError(ex, $"Region OCR failed for {imagePath}");
+                        return string.Empty;
                     }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, $"Region OCR failed for {imagePath}");
-                    return string.Empty;
-                }
-            });
+                });
+            }
+            finally
+            {
+                _engineLock.Release();
+            }
         }
 
         public void Dispose()
@@ -254,6 +315,7 @@ namespace DocumentArchiever.Core.OCR
             {
                 _arabicEngine?.Dispose();
                 _englishEngine?.Dispose();
+                _engineLock.Dispose();
                 _disposed = true;
             }
         }

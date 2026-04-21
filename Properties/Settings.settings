@@ -27,7 +27,7 @@
       <Value Profile="(Default)">Ib@5282105</Value>
     </Setting>
     <Setting Name="LastDocumentType" Type="System.Int32" Scope="User">
-      <Value Profile="(Default)">18</Value>
+      <Value Profile="(Default)">9</Value>
     </Setting>
   </Settings>
 </SettingsFile>

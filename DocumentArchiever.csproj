@@ -9,22 +9,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Remove="Core\Document\**" />
-    <Compile Remove="v1\**" />
-    <Compile Remove="v2\**" />
-    <EmbeddedResource Remove="Core\Document\**" />
-    <EmbeddedResource Remove="v1\**" />
-    <EmbeddedResource Remove="v2\**" />
-    <None Remove="Core\Document\**" />
-    <None Remove="v1\**" />
-    <None Remove="v2\**" />
-  </ItemGroup>
-
-  <ItemGroup>
     <PackageReference Include="Emgu.CV" Version="4.8.0.5324" />
     <PackageReference Include="IronPdf.Linux" Version="2026.4.1" />
     <PackageReference Include="iTextSharp" Version="5.5.13.5" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.5" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
     <PackageReference Include="PDFsharp" Version="6.0.0" />
     <PackageReference Include="System.Data.SqlClient" Version="4.9.1" />
     <PackageReference Include="Tesseract" Version="5.2.0" />
@@ -32,12 +21,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\ntwain-4\src\NTwain\NTwain.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
     <Reference Include="Interop.WIA">
-      <HintPath>..\BinAqil\2sideScanningWithOCR\bin\Release\Debug\Interop.WIA.dll</HintPath>
+      <HintPath>..\v2\bin\x86\Debug\net8.0-windows10.0.26100.0\Interop.WIA.dll</HintPath>
+    </Reference>
+    <Reference Include="NTwain">
+      <HintPath>..\v1\bin\x86\Debug\net6.0-windows\NTwain.dll</HintPath>
     </Reference>
   </ItemGroup>
 

@@ -5,7 +5,6 @@ using DocumentArchiever.Data;
 using DocumentArchiever.Data.Entities;
 using DocumentArchiever.Services;
 using DocumentArchiever.Setting;
-using System.Threading;
 
 namespace DocumentArchiever.UI.Forms
 {
@@ -24,6 +23,8 @@ namespace DocumentArchiever.UI.Forms
         private List<string> _unidentifiedDocuments;
         private int _imageCounter;
         private bool _isDifferentTypeWarningShown;
+        private int _pendingImageProcessing;
+        private int _temporaryDocumentCounter;
 
         public MainForm(IScanner scanner, IOcrEngine ocrEngine, IDatabaseService databaseService,
                         IUpdateService updateService, ILogger logger)
@@ -46,10 +47,25 @@ namespace DocumentArchiever.UI.Forms
 
         private void SubscribeToScannerEvents()
         {
-            _scanner.ImageScanned += OnImageScanned;
-            _scanner.ScanProgress += OnScanProgress;
-            _scanner.ScanCompleted += OnScanCompleted;
-            _scanner.ScanError += OnScanError;
+            //try
+            //{
+            //    _logger.LogInfo($"MainForm subscribing to scanner events. MainForm Hash: {this.GetHashCode()}, Scanner Hash: {_scanner?.GetHashCode() ?? 0}");
+            //}
+            //catch { }
+            try
+            {
+                _scanner.ImageScanned += OnImageScanned;
+                _scanner.ScanProgress += OnScanProgress;
+                _scanner.ScanCompleted += OnScanCompleted;
+                _scanner.ScanError += OnScanError;
+
+
+
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in MainForm subscribed to scanner events");
+            }
         }
 
         private async void OnFormLoad(object sender, EventArgs e)
@@ -58,7 +74,7 @@ namespace DocumentArchiever.UI.Forms
             {
                 await LoadBranchesAsync();
                 await LoadScannersAsync();
-              
+
                 InitializeDocumentProcessor();
 
                 // Check for updates in background
@@ -134,61 +150,32 @@ namespace DocumentArchiever.UI.Forms
                 cbBranches.SelectedValue = Properties.Settings.Default.LastSelectedBranch;
             }
         }
-        
-        /*
-        private void LoadSavedSettings()
-        {
-            // Load from saved settings
-            dtTime.Value = Properties.Settings.Default.LastDate != DateTime.MinValue
-                ? Properties.Settings.Default.LastDate
-                : DateTime.Now;
 
-            txtDPI.Text = Properties.Settings.Default.LastDpi > 0
-                ? Properties.Settings.Default.LastDpi.ToString()
-                : "150";
 
-            // Load last selected branch
-            if (Properties.Settings.Default.LastSelectedBranch > 0)
-            {
-                // Wait for branches to load then select
-                cbBranches.SelectedValue = Properties.Settings.Default.LastSelectedBranch;
-            }
 
-            // Load document type
-            cbCashDocs.Checked = Properties.Settings.Default.LastDocumentType == 18;
-            cbBtwBranches.Checked = Properties.Settings.Default.LastDocumentType == 91;
-
-            // Load scanner settings
-            chkDuplex.Checked = Properties.Settings.Default.LastDuplexEnabled;
-            rbColor.Checked = Properties.Settings.Default.LastColorMode == "Color";
-            rbGrayscale.Checked = Properties.Settings.Default.LastColorMode == "Grayscale";
-            rbBlackWhite.Checked = Properties.Settings.Default.LastColorMode == "BlackWhite";
-            chkContinuousScan.Checked = Properties.Settings.Default.LastContinuousScan;
-        }
-        */
         private void SaveSettings()
         {
             Properties.Settings.Default.LastDate = dtTime.Value;
-           // Properties.Settings.Default.LastDpi = int.TryParse(txtDPI.Text, out var dpi) ? dpi : 150;
+            // Properties.Settings.Default.LastDpi = int.TryParse(txtDPI.Text, out var dpi) ? dpi : 150;
 
             if (cbBranches.SelectedValue != null)
             {
-                Properties.Settings.Default.LastSelectedBranch =(Int64) cbBranches.SelectedValue;
+                Properties.Settings.Default.LastSelectedBranch = (Int64)cbBranches.SelectedValue;
             }
 
             Properties.Settings.Default.LastDocumentType = GetSelectedDocumentType();
             //Properties.Settings.Default.LastDuplexEnabled = chkDuplex.Checked;
 
-          //  if (rbColor.Checked) Properties.Settings.Default.LastColorMode = "Color";
-          // else if (rbGrayscale.Checked) Properties.Settings.Default.LastColorMode = "Grayscale";
-          //  else Properties.Settings.Default.LastColorMode = "BlackWhite";
+            //  if (rbColor.Checked) Properties.Settings.Default.LastColorMode = "Color";
+            // else if (rbGrayscale.Checked) Properties.Settings.Default.LastColorMode = "Grayscale";
+            //  else Properties.Settings.Default.LastColorMode = "BlackWhite";
 
-          //  Properties.Settings.Default.LastContinuousScan = chkContinuousScan.Checked;
+            //  Properties.Settings.Default.LastContinuousScan = chkContinuousScan.Checked;
             Properties.Settings.Default.Save();
         }
 
-      
-        private void OnImageScanned(object sender, ImageScannedEventArgs e)
+
+        private async void OnImageScanned(object sender, ImageScannedEventArgs e)
         {
             if (InvokeRequired)
             {
@@ -196,22 +183,134 @@ namespace DocumentArchiever.UI.Forms
                 return;
             }
 
-            _scannedImages.Add(e.ImagePath);
-            _imageCounter++;
-            _logger.LogInfo($"Image scanned: {e.ImagePath}, Total: {_imageCounter}");
-            // Process images in pairs for duplex mode
-            if (chkDuplex.Checked && _scannedImages.Count % 2 == 0 && _scannedImages.Count >= 2)
+            Interlocked.Increment(ref _pendingImageProcessing);
+
+            try
             {
-                _logger.LogInfo("Processing document pair...");
-                ProcessDocumentPair();
+                //  _logger.LogInfo($"OnImageScanned called - Page: {e.PageNumber}, IsFrontSide: {e.IsFrontSide}, Path: {e.ImagePath}");
+                if ((!chkDuplex.Checked || chkWithoutIdentity.Checked) && !e.IsFrontSide)
+                {
+                    _logger.LogInfo($"Ignoring back-side image in single-sided mode: {e.ImagePath}");
+                    // Remove temporary file to avoid clutter (safe-best-effort)
+                    try { CleanupTempFiles(e.ImagePath); } catch { }
+                    return;
+                }
+
+                _scannedImages.Add(e.ImagePath);
+                _imageCounter++;
+
+                //   _logger.LogInfo($"Images in collection: {_scannedImages.Count}, Duplex mode: {chkDuplex.Checked}");
+
+                if (chkDuplex.Checked && _scannedImages.Count % 2 == 0 && _scannedImages.Count >= 2)
+                {
+                    //   _logger.LogInfo("Processing document pair...");
+                    await ProcessDocumentPairAsync();
+                }
+                else if (!chkDuplex.Checked && _scannedImages.Count >= 1)
+                {
+                    //  _logger.LogInfo("Processing single document...");
+                    await ProcessSingleDocumentAsync();
+                }
+                else
+                {
+                    _logger.LogInfo("Waiting for more images...");
+                }
+
+                UpdateInfo($"تم مسح {_imageCounter} صورة");
             }
-            else if (!chkDuplex.Checked && _scannedImages.Count >= 1)
+            finally
             {
-                ProcessSingleDocument();
+                Interlocked.Decrement(ref _pendingImageProcessing);
+            }
+        }
+        private async Task ProcessSingleDocumentAsync()
+        {
+            //  _logger.LogInfo("ProcessSingleDocumentAsync START");
+
+            var image = _scannedImages.Last();
+
+            //   _logger.LogInfo($"Image: {image}, Exists: {File.Exists(image)}");
+
+            bool requiresOcrNumber = !IsNumberedDocument() && !chkWithoutIdentity.Checked;
+            if (!requiresOcrNumber && await IsBlankImageAsync(image))
+            {
+                //  _logger.LogWarning("Image is blank, skipping");
+                CleanupTempFiles(image);
+                return;
             }
 
-            UpdateInfo($"تم مسح {_imageCounter} صورة");
+            string documentNumber = await GetDocumentNumberAsync(image);
+            // _logger.LogInfo($"Document number: {documentNumber}");
+
+            if (string.IsNullOrEmpty(documentNumber))
+            {
+                //  _logger.LogWarning("No document number found, adding to unidentified list");
+                AddUnidentifiedDocument(image);
+                return;
+            }
+
+            //  _logger.LogInfo($"Queueing document {documentNumber} for processing");
+            _documentProcessor.QueueDocument(image, null, documentNumber);
+            if (IsNumberedDocument())
+            {
+                _currentSession.CurrentNumber++;
+                // _logger.LogInfo($"Current number incremented to: {_currentSession.CurrentNumber}");
+            }
+            _documentProcessor.QueueMissedNumbers();
+
+
+
+            //   _logger.LogInfo("ProcessSingleDocumentAsync END");
         }
+        private async Task ProcessDocumentPairAsync()
+        {
+            //   _logger.LogInfo("ProcessDocumentPairAsync START");
+
+            var frontImage = _scannedImages[_scannedImages.Count - 2];
+            var backImage = _scannedImages[_scannedImages.Count - 1];
+
+            //    _logger.LogInfo($"Front: {frontImage}, Exists: {File.Exists(frontImage)}");
+            //    _logger.LogInfo($"Back: {backImage}, Exists: {File.Exists(backImage)}");
+
+            bool requiresOcrNumber = !IsNumberedDocument() && !chkWithoutIdentity.Checked;
+            if (requiresOcrNumber)
+            {
+                _logger.LogInfo("Skipping blank-page filtering for OCR-based transfer documents to match legacy behavior");
+            }
+            else if (await IsBlankImageAsync(frontImage) && await IsBlankImageAsync(backImage))
+            {
+                //     _logger.LogWarning("Both sides blank, skipping");
+                CleanupTempFiles(frontImage, backImage);
+                MessageBox.Show("قد يكون المستند فارغ من الجهتين!");
+                return;
+            }
+
+            string documentNumber = await GetDocumentNumberAsync(frontImage);
+            // _logger.LogInfo($"Document number: {documentNumber}");
+
+            if (string.IsNullOrEmpty(documentNumber))
+            {
+                //      _logger.LogWarning("No document number found, adding to unidentified list");
+                AddUnidentifiedDocument(frontImage);
+                if (!string.IsNullOrEmpty(backImage))
+                    AddUnidentifiedDocument(backImage);
+                return;
+            }
+
+            // _logger.LogInfo($"Queueing document {documentNumber} for processing");
+            _documentProcessor.QueueDocument(frontImage, backImage, documentNumber);
+            if (IsNumberedDocument())
+            {
+                _currentSession.CurrentNumber++;
+                //  _logger.LogInfo($"Current number incremented to: {_currentSession.CurrentNumber}");
+            }
+            _documentProcessor.QueueMissedNumbers();
+
+
+
+            //   _logger.LogInfo("ProcessDocumentPairAsync END");
+        }
+
 
         private async void ProcessDocumentPair()
         {
@@ -298,12 +397,46 @@ namespace DocumentArchiever.UI.Forms
 
             string expressNumber = await _ocrEngine.ExtractExpressNumberAsync(imagePath);
 
+            if (GetSelectedDocumentType() == 9)
+            {
+                if (!string.IsNullOrWhiteSpace(expressNumber) && expressNumber.StartsWith("599"))
+                {
+                    return expressNumber;
+                }
+
+                //  _logger.LogWarning($"Type 9 document did not produce a valid 599 number from OCR: {imagePath}. Marking as unidentified.");
+                AddUnidentifiedDocument(imagePath);
+                return string.Empty;
+            }
+
             if (string.IsNullOrEmpty(expressNumber) && !chkWithoutIdentity.Checked)
             {
                 expressNumber = await _ocrEngine.ExtractVoucherNumberAsync(imagePath);
             }
 
             return expressNumber;
+        }
+
+        private void AddUnidentifiedDocument(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+
+            if (!_unidentifiedDocuments.Contains(path))
+            {
+                _unidentifiedDocuments.Add(path);
+            }
+        }
+
+        private string AllocateTemporaryDocumentNumber()
+        {
+            int next = Interlocked.Increment(ref _temporaryDocumentCounter);
+            if (_currentSession != null)
+            {
+                _currentSession.CurrentNumber = next;
+            }
+
+            return next.ToString();
         }
 
         private async Task<bool> ValidateDocumentTypeAsync(string imagePath)
@@ -319,36 +452,66 @@ namespace DocumentArchiever.UI.Forms
                 _ => true
             };
         }
-
+        private string GetDocumentTypeName()
+        {
+            if (cbCashDocs.Checked) return "سندات صرف نقدي";
+            if (cbBtwBranches.Checked) return "سندات صرف بين الفروع";
+            return "سندات صرف حوالات";
+        }
         private async Task<bool> IsBlankImageAsync(string imagePath)
         {
             return await Task.Run(() =>
             {
                 try
                 {
-                    using (var image = (Bitmap)Image.FromFile(imagePath))
-                    {
-                        int whitePixels = 0;
-                        int totalPixels = 0;
+                    using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    using var sourceImage = Image.FromStream(stream);
+                    using var image = new Bitmap(sourceImage);
 
-                        for (int y = 0; y < image.Height; y += 10)
+                    int sampleStep = Math.Max(16, Math.Min(image.Width, image.Height) / 100);
+                    int whitePixels = 0;
+                    int darkPixels = 0;
+                    int totalPixels = 0;
+
+                    for (int y = 0; y < image.Height; y += sampleStep)
+                    {
+                        for (int x = 0; x < image.Width; x += sampleStep)
                         {
-                            for (int x = 0; x < image.Width; x += 10)
-                            {
-                                Color pixel = image.GetPixel(x, y);
-                                double luminance = 0.299 * pixel.R + 0.587 * pixel.G + 0.114 * pixel.B;
-                                if (luminance >= 220)
-                                    whitePixels++;
-                                totalPixels++;
-                            }
+                            Color pixel = image.GetPixel(x, y);
+                            double luminance = 0.299 * pixel.R + 0.587 * pixel.G + 0.114 * pixel.B;
+
+                            if (luminance >= 245)
+                                whitePixels++;
+                            if (luminance <= 180)
+                                darkPixels++;
+
+                            totalPixels++;
                         }
 
-                        return totalPixels == 0 || (double)whitePixels / totalPixels >= 0.95;
+                        // If we already found enough dark content, it is not blank.
+                        if (darkPixels >= 25)
+                        {
+                            _logger.LogInfo($"Blank check for {Path.GetFileName(imagePath)}: not blank (dark samples: {darkPixels}, total samples: {totalPixels})");
+                            return false;
+                        }
                     }
+
+                    if (totalPixels == 0)
+                    {
+                        _logger.LogWarning($"Blank check for {Path.GetFileName(imagePath)} had zero samples; treating as blank");
+                        return true;
+                    }
+
+                    double whiteRatio = (double)whitePixels / totalPixels;
+                    bool isBlank = whiteRatio >= 0.995 && darkPixels < 25;
+                    //    _logger.LogInfo($"Blank check for {Path.GetFileName(imagePath)}: whiteRatio={whiteRatio:F4}, darkSamples={darkPixels}, totalSamples={totalPixels}, isBlank={isBlank}");
+                    return isBlank;
                 }
-                catch
+                catch (Exception ex)
                 {
-                    return true;
+                    _logger.LogWarning($"Blank check failed for {imagePath}: {ex.Message}. Treating as non-blank.");
+                    // Prefer processing over silently dropping documents.
+                    return false;
                 }
             });
         }
@@ -375,7 +538,8 @@ namespace DocumentArchiever.UI.Forms
 
             UpdateInfo(e.Message);
         }
-        private void OnScanCompleted(object sender, ScanCompletedEventArgs e)
+
+        private async void OnScanCompleted(object sender, ScanCompletedEventArgs e)
         {
             if (InvokeRequired)
             {
@@ -383,53 +547,49 @@ namespace DocumentArchiever.UI.Forms
                 return;
             }
 
-            // Stop progress bar
-            progressBar1.Visible = false;
-            progressBar1.Style = ProgressBarStyle.Blocks;
+            //  _logger.LogInfo($"OnScanCompleted: Total pages scanned: {e.TotalPages}");
 
+            await WaitForPendingImageProcessingAsync();
+
+            // Force process any remaining items
             _documentProcessor.ProcessMissedNumbersRemaining();
+
+            // Make sure the queue is processed
             _documentProcessor.StopProcessing();
 
             if (_unidentifiedDocuments.Count > 0)
             {
+                //   _logger.LogInfo($"Unidentified documents: {_unidentifiedDocuments.Count}");
                 ShowUnidentifiedDocuments();
             }
 
             ResetScanUI();
-            UpdateInfo($"اكتمل المسح. تم مسح {e.TotalPages} صورة");
-
+            UpdateInfo($"اكتمل المسح. تم مسح {e.TotalPages / 2} صورة");
             if (chkContinuousScan.Checked && _unidentifiedDocuments.Count == 0)
             {
                 PromptForMoreDocuments();
             }
         }
 
-        /*
-        private void OnScanCompleted(object sender, ScanCompletedEventArgs e)
+        private async Task WaitForPendingImageProcessingAsync()
         {
-            if (InvokeRequired)
+            const int maxWaitMs = 15000;
+            const int pollDelayMs = 100;
+            int waitedMs = 0;
+
+            while (Volatile.Read(ref _pendingImageProcessing) > 0 && waitedMs < maxWaitMs)
             {
-                Invoke(new Action<object, ScanCompletedEventArgs>(OnScanCompleted), sender, e);
-                return;
+                //  _logger.LogInfo($"Waiting for image processing to finish. Pending handlers: {Volatile.Read(ref _pendingImageProcessing)}");
+                await Task.Delay(pollDelayMs);
+                waitedMs += pollDelayMs;
             }
 
-            _documentProcessor.ProcessMissedNumbersRemaining();
-            _documentProcessor.StopProcessing();
-
-            if (_unidentifiedDocuments.Count > 0)
+            if (Volatile.Read(ref _pendingImageProcessing) > 0)
             {
-                ShowUnidentifiedDocuments();
-            }
-
-            ResetScanUI();
-            UpdateInfo($"اكتمل المسح. تم مسح {e.TotalPages} صورة");
-
-            if (chkContinuousScan.Checked)
-            {
-                PromptForMoreDocuments();
+                _logger.LogWarning($"Continuing scan completion while {Volatile.Read(ref _pendingImageProcessing)} image handlers are still running");
             }
         }
-        */
+
         private void OnScanError(object sender, ScanErrorEventArgs e)
         {
             if (InvokeRequired)
@@ -463,7 +623,7 @@ namespace DocumentArchiever.UI.Forms
                 return;
             }
 
-            _logger.LogError($"فشل حفظ المستند {e.DocumentNumber}: {e.Error}");
+            //  _logger.LogError($"فشل حفظ المستند {e.DocumentNumber}: {e.Error}");
             AddError($"خطأ في المستند {e.DocumentNumber}: {e.Error}");
         }
 
@@ -480,8 +640,13 @@ namespace DocumentArchiever.UI.Forms
 
         private async void btnScan_Click(object sender, EventArgs e)
         {
+            //_logger.LogInfo("btnScan_Click START");
+
             if (!ValidateScanSettings())
+            {
+                _logger.LogWarning("Scan settings validation failed");
                 return;
+            }
 
             try
             {
@@ -499,6 +664,17 @@ namespace DocumentArchiever.UI.Forms
                 _currentSession = CreateScanSession();
                 _documentProcessor.InitializeSession(_currentSession);
 
+                // Log session info and computed save path
+                try
+                {
+                    string sessionSavePath = GetDocumentSavePath(_currentSession);
+                    //   _logger.LogInfo($"Scan session created. Id: {_currentSession.Id}, StartNumber: {_currentSession.StartNumber}, SavePath: {sessionSavePath}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning($"Failed to compute save path for session: {ex.Message}");
+                }
+
                 var selectedScanner = (ScannerInfo)cboScanners.SelectedItem;
                 var options = new ScanOptions
                 {
@@ -509,11 +685,27 @@ namespace DocumentArchiever.UI.Forms
                     ContinuousMode = chkContinuousScan.Checked
                 };
 
-                await _scanner.ConnectAsync(selectedScanner, _scanCts.Token);
+                //_logger.LogInfo($"Connecting to scanner: {selectedScanner?.Name ?? "<null>"}");
+                //var connected = await _scanner.ConnectAsync(selectedScanner, _scanCts.Token);
+                //_logger.LogInfo($"Scanner connect result: {connected}");
+
+                //  _logger.LogInfo($"btnScan_Click - using scanner instance hash: {_scanner?.GetHashCode() ?? 0}");
+                //  _logger.LogInfo($"Connecting to scanner: {selectedScanner?.Name ?? "<null>"}");
+                var connected = await _scanner.ConnectAsync(selectedScanner, _scanCts.Token);
+                // _logger.LogInfo($"Scanner connect result: {connected}, scanner hash after connect: {_scanner?.GetHashCode() ?? 0}");
+                /////////////////
+                if (!connected)
+                {
+                    throw new InvalidOperationException("Failed to connect to scanner");
+                }
+
+                //  _logger.LogInfo("Starting scan (StartScanningAsync)...");
                 await _scanner.StartScanningAsync(options, _scanCts.Token);
+                //  _logger.LogInfo("StartScanningAsync completed (scan finished or cancelled)");
             }
             catch (OperationCanceledException)
             {
+                _logger.LogInfo("Scan cancelled by user");
                 UpdateInfo("تم إلغاء المسح");
             }
             catch (Exception ex)
@@ -525,10 +717,10 @@ namespace DocumentArchiever.UI.Forms
             }
         }
 
-        private void btnCancel_Click(object sender, EventArgs e)
+        private async void btnCancel_Click(object sender, EventArgs e)
         {
             _scanCts?.Cancel();
-            _scanner.StopScanningAsync().Wait();
+            await _scanner.StopScanningAsync();
             UpdateInfo("جاري إلغاء المسح...");
         }
 
@@ -541,12 +733,15 @@ namespace DocumentArchiever.UI.Forms
         {
             ResetUI();
         }
+        /*
         private ScanSession CreateScanSession()
         {
             var missedNumbers = ParseMissedNumbers(txtMissedNumbers.Text);
-            int startNumber = IsNumberedDocument() && int.TryParse(txtStartDocNumber.Text, out var num) ? num : 1;
+            int startNumber = IsNumberedDocument() && int.TryParse(txtStartDocNumber.Text, out var num)
+                ? num
+                : CreateTemporaryDocumentSeed();
 
-          
+
 
             var session = new ScanSession
             {
@@ -561,10 +756,69 @@ namespace DocumentArchiever.UI.Forms
                 IsContinuousMode = chkContinuousScan.Checked
             };
 
+            _temporaryDocumentCounter = startNumber - 1;
+
             CreateSessionFolders(session);
             return session;
         }
-       
+        */
+        private int GetStartNumberFromUi()
+        {
+            // If not numbered, produce a temporary seed
+            if (!IsNumberedDocument())
+                return CreateTemporaryDocumentSeed();
+
+            // For cash documents use txtStartDocNumber, for between-branches use txtBtwBranch
+            if (cbCashDocs.Checked)
+            {
+                if (int.TryParse(txtStartDocNumber.Text, out var n))
+                    return n;
+            }
+            else if (cbBtwBranches.Checked)
+            {
+                if (int.TryParse(txtBtwBranch.Text, out var b))
+                    return b;
+            }
+
+            // Fallback to temporary seed if parse fails
+            return CreateTemporaryDocumentSeed();
+        }
+
+        private ScanSession CreateScanSession()
+        {
+            var missedNumbers = ParseMissedNumbers(txtMissedNumbers.Text);
+            int startNumber = GetStartNumberFromUi();
+
+            var session = new ScanSession
+            {
+                Id = Guid.NewGuid().ToString(),
+                StartTime = dtTime.Value,
+                BranchId = (Int64)cbBranches.SelectedValue,
+                BranchName = cbBranches.Text,
+                DocumentTypeId = GetSelectedDocumentType(),
+                StartNumber = startNumber,
+                CurrentNumber = startNumber,
+                MissedNumbers = missedNumbers,
+                IsContinuousMode = chkContinuousScan.Checked
+            };
+
+            _temporaryDocumentCounter = startNumber - 1;
+
+            CreateSessionFolders(session);
+            return session;
+        }
+
+        private int CreateTemporaryDocumentSeed()
+        {
+            int seed = (int)(DateTime.UtcNow.Ticks % 900000000);
+            if (seed < 100000000)
+            {
+                seed += 100000000;
+            }
+
+            return seed;
+        }
+
         private void CreateSessionFolders(ScanSession session)
         {
             try
@@ -583,7 +837,7 @@ namespace DocumentArchiever.UI.Forms
                 if (!Directory.Exists(savePath))
                 {
                     Directory.CreateDirectory(savePath);
-                   // _logger.LogInfo($"Created folder: {savePath}");
+                    // _logger.LogInfo($"Created folder: {savePath}");
                 }
             }
             catch (Exception ex)
@@ -622,7 +876,7 @@ namespace DocumentArchiever.UI.Forms
             }
 
             string docTypeName = session.DocumentTypeId switch
-            { 
+            {
                 18 => "سندات صرف نقدي",
                 91 => "سندات صرف بين الفروع",
                 _ => "سندات صرف حوالات"
@@ -813,7 +1067,10 @@ namespace DocumentArchiever.UI.Forms
             txtStartDocNumber.Visible = cbCashDocs.Checked;
             txtMissedNumbers.Visible = cbCashDocs.Checked;
             lblDocStartNumber.Visible = cbCashDocs.Checked;
+            chkWithoutIdentity.Checked = !cbCashDocs.Checked;
+            chkDuplex.Checked = cbCashDocs.Checked;
 
+            lblDocStartNumber.Visible = cbCashDocs.Checked;
             if (cbCashDocs.Checked)
             {
                 cbBtwBranches.Checked = false;
@@ -825,6 +1082,9 @@ namespace DocumentArchiever.UI.Forms
             txtBtwBranch.Visible = cbBtwBranches.Checked;
             txtMissedNumbers.Visible = cbBtwBranches.Checked;
             lblDocStartNumber.Visible = cbBtwBranches.Checked;
+            chkWithoutIdentity.Checked = cbBtwBranches.Checked;
+            chkDuplex.Checked = !cbBtwBranches.Checked;
+            lblDocStartNumber.Visible = cbBtwBranches.Checked;
 
             if (cbBtwBranches.Checked)
             {
@@ -834,9 +1094,11 @@ namespace DocumentArchiever.UI.Forms
 
         private async void cbBranches_SelectedIndexChanged(object sender, EventArgs e)
         {
+
             if (cbBranches.SelectedValue != null && IsNumberedDocument())
             {
-                long branchId = (Int64) cbBranches.SelectedValue;
+
+                long branchId = (Int64)cbBranches.SelectedValue;
                 int docType = GetSelectedDocumentType();
                 int lastNumber = await _databaseService.GetLastDocumentNumberAsync(branchId, docType);
 
@@ -846,7 +1108,7 @@ namespace DocumentArchiever.UI.Forms
                     txtBtwBranch.Text = (lastNumber + 1).ToString();
             }
         }
-
+        /*
         private void txtStartDocNumber_TextChanged(object sender, EventArgs e)
         {
             if (int.TryParse(txtStartDocNumber.Text, out int num))
@@ -855,20 +1117,64 @@ namespace DocumentArchiever.UI.Forms
                     _currentSession.CurrentNumber = num;
             }
         }
+        */
+        private void txtStartDocNumber_TextChanged(object sender, EventArgs e)
+        {
+            if (_currentSession == null)
+                return;
 
+            // Update the session's current number based on the active numbering textbox
+            if (cbBtwBranches.Checked)
+            {
+                if (int.TryParse(txtBtwBranch.Text, out int btwn))
+                    _currentSession.CurrentNumber = btwn;
+            }
+            else
+            {
+                if (int.TryParse(txtStartDocNumber.Text, out int start))
+                    _currentSession.CurrentNumber = start;
+            }
+        }
         private void lstUnidentified_SelectedIndexChanged(object sender, EventArgs e)
         {
             if (lstUnidentified.SelectedItem != null)
             {
+                // string selectedFile = lstUnidentified.SelectedItem.ToString();
+                // string fullPath = Path.Combine(Properties.Settings.Default.SavePath, selectedFile);
                 string selectedFile = lstUnidentified.SelectedItem.ToString();
-                string fullPath = Path.Combine(Properties.Settings.Default.SavePath, selectedFile);
+                string fullPath = null;
+                //if (File.Exists(fullPath))
+                //{
+                //    webBrowserPdf.Navigate(fullPath);
+                //    btnSaveToDatabase.Visible = true;
+                //    btnSearch.Visible = false;
+                //}
 
-                if (File.Exists(fullPath))
+                try
+                {
+                    // search for the file under the configured save root (handles nested year/branch/... folders)
+                    var matches = Directory.GetFiles(Properties.Settings.Default.SavePath, selectedFile, SearchOption.AllDirectories);
+                    if (matches != null && matches.Length > 0)
+                    {
+                        fullPath = matches[0];
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning($"Error while searching for file {selectedFile}: {ex.Message}");
+                }
+
+                if (!string.IsNullOrEmpty(fullPath) && File.Exists(fullPath))
                 {
                     webBrowserPdf.Navigate(fullPath);
                     btnSaveToDatabase.Visible = true;
                     btnSearch.Visible = false;
                 }
+                else
+                {
+                    MessageBox.Show("الملف غير موجود في مسار الحفظ", "تنبيه", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+
             }
         }
 
@@ -956,12 +1262,7 @@ namespace DocumentArchiever.UI.Forms
                 GetDocumentTypeName());
         }
 
-        private string GetDocumentTypeName()
-        {
-            if (cbCashDocs.Checked) return "سندات صرف نقديv";
-            if (cbBtwBranches.Checked) return "سندات صرف بين الفروع";
-            return "سندات صرف حوالات";
-        }
+
         //Unknown = 0,
         //"سندات صرف حوالات" = 1,
         // "سندات صرف بين الفروع" = 2,
@@ -1169,7 +1470,7 @@ namespace DocumentArchiever.UI.Forms
             try
             {
                 // Cancel scanning if in progress
-              
+
                 if (_scanCts != null && !_scanCts.IsCancellationRequested)
                 {
                     try
@@ -1221,9 +1522,28 @@ namespace DocumentArchiever.UI.Forms
 
         private void tsmiSettings_Click(object sender, EventArgs e)
         {
-            
-                 var SettingForm = new fmDbSettings();
+
+            var SettingForm = new fmDbSettings();
             SettingForm.ShowDialog();
+        }
+        private void btnTestQueue_Click(object sender, EventArgs e)
+        {
+            if (_scannedImages.Count >= 2)
+            {
+                string testFront = _scannedImages[_scannedImages.Count - 2];
+                string testBack = _scannedImages[_scannedImages.Count - 1];
+
+                _logger.LogInfo($"Manual queue test - Front: {testFront}, Back: {testBack}");
+                _documentProcessor.QueueDocument(testFront, testBack, "TEST123");
+            }
+            else
+            {
+                MessageBox.Show($"Not enough images. Have {_scannedImages.Count} images");
+            }
+        }
+
+        private void txtMissedNumbers_Leave(object sender, EventArgs e)
+        {
         }
     }
 }

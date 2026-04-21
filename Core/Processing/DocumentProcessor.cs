@@ -31,11 +31,33 @@ namespace DocumentArchiever.Core.Processing
             _ocrEngine = ocrEngine;
             _databaseService = databaseService;
             _logger = logger;
-            _pdfGenerator = new PdfGenerator();
+            _pdfGenerator = new PdfGenerator(_logger);
             _imageProcessor = new ImageProcessor(logger);
             _unidentifiedDocuments = new List<string>();
         }
+        public void QueueDocument(string frontImage, string backImage, string documentNumber)
+        {
+            //_logger.LogInfo($"QueueDocument called for {documentNumber}");
+            //  _logger.LogInfo($"  Front: {frontImage}");
+            //  _logger.LogInfo($"  Back: {backImage}");
 
+            if (_processingQueue == null || _processingQueue.IsAddingCompleted)
+            {
+                _logger.LogWarning("Queue was null or completed, reinitializing...");
+                InitializeProcessingQueue();
+            }
+
+            var pair = new DocumentPair
+            {
+                FrontImagePath = frontImage,
+                BackImagePath = backImage,
+                DocumentNumber = documentNumber,
+                IsMissedDocument = false
+            };
+
+            _processingQueue.Add(pair);
+            //  _logger.LogInfo($"Item added to queue. Total items: {_processingQueue.Count}");
+        }
         public void InitializeSession(ScanSession session)
         {
             _currentSession = session;
@@ -44,33 +66,24 @@ namespace DocumentArchiever.Core.Processing
 
             InitializeProcessingQueue();
         }
-
         private void InitializeProcessingQueue()
         {
+            //   _logger.LogInfo("InitializeProcessingQueue START");
+
             _processingQueue = new BlockingCollection<DocumentPair>(new ConcurrentQueue<DocumentPair>());
             _processingCts = new CancellationTokenSource();
             _processingTask = Task.Run(() => ProcessQueueAsync(_processingCts.Token));
+
+            // _logger.LogInfo($"Processing task started. Task ID: {_processingTask.Id}");
         }
 
-        public void QueueDocument(string frontImage, string backImage, string documentNumber)
-        {
-            if (_processingQueue == null || _processingQueue.IsAddingCompleted)
-            {
-                InitializeProcessingQueue();
-            }
 
-            _processingQueue.Add(new DocumentPair
-            {
-                FrontImagePath = frontImage,
-                BackImagePath = backImage,
-                DocumentNumber = documentNumber
-            });
-        }
 
         public void QueueMissedNumbers()
         {
             while (_missedNumbers.Count > 0 && _missedNumbers.Min() == _currentSession.CurrentNumber)
             {
+
                 _processingQueue.Add(new DocumentPair
                 {
                     FrontImagePath = null,
@@ -81,9 +94,27 @@ namespace DocumentArchiever.Core.Processing
 
                 _missedNumbers.Remove(_currentSession.CurrentNumber);
                 _currentSession.CurrentNumber++;
+
             }
         }
+        //public void QueueMissedNumbers()
+        //{
+        //    while (_missedNumbers.Count > 0 && _missedNumbers.Min() == _currentSession.CurrentNumber)
+        //    {
+        //        int missed = _currentSession.CurrentNumber;
 
+        //        _processingQueue.Add(new DocumentPair
+        //        {
+        //            FrontImagePath = null,
+        //            BackImagePath = null,
+        //            DocumentNumber = missed.ToString(),
+        //            IsMissedDocument = true
+        //        });
+
+        //        _missedNumbers.Remove(missed);
+        //        _currentSession.CurrentNumber = missed + 1;
+        //    }
+        //}
         public void ProcessMissedNumbersRemaining()
         {
             while (_missedNumbers.Count > 0)
@@ -100,15 +131,19 @@ namespace DocumentArchiever.Core.Processing
             }
         }
 
+
         private async Task ProcessQueueAsync(CancellationToken cancellationToken)
         {
+            // _logger.LogInfo("ProcessQueueAsync started, waiting for items...");
             foreach (var pair in _processingQueue.GetConsumingEnumerable(cancellationToken))
             {
                 try
                 {
+                    //    _logger.LogInfo($"Dequeued item: {pair.DocumentNumber}, IsMissed: {pair.IsMissedDocument}, Front: {pair.FrontImagePath}, Back: {pair.BackImagePath}");
+
                     ProgressUpdated?.Invoke(this, new ProgressEventArgs
                     {
-                        Message = $"Processing document {pair.DocumentNumber}",
+                        Message = $"Processing queue item: {pair.DocumentNumber}",
                         Percentage = 0
                     });
 
@@ -131,7 +166,7 @@ namespace DocumentArchiever.Core.Processing
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, $"Failed to process document {pair.DocumentNumber}");
+                    _logger.LogError(ex, $"Failed to process {pair.DocumentNumber}");
                     DocumentError?.Invoke(this, new DocumentErrorEventArgs
                     {
                         DocumentNumber = pair.DocumentNumber,
@@ -139,6 +174,7 @@ namespace DocumentArchiever.Core.Processing
                     });
                 }
             }
+            //   _logger.LogInfo("ProcessQueueAsync ended");
         }
 
         private async Task SaveDocumentAsync(DocumentPair pair)
@@ -148,7 +184,23 @@ namespace DocumentArchiever.Core.Processing
 
             Directory.CreateDirectory(savePath);
 
-            await _pdfGenerator.GenerateAsync(pdfPath, pair.FrontImagePath, pair.BackImagePath);
+            //  _logger.LogInfo($"SaveDocumentAsync START for {pair.DocumentNumber}. PDF path: {pdfPath}");
+            // _logger.LogInfo($"  Front exists: {File.Exists(pair.FrontImagePath)}, Back exists: {File.Exists(pair.BackImagePath)}");
+
+            try
+            {
+                // _logger.LogInfo($"Starting PDF generation for {pair.DocumentNumber} -> {pdfPath}");
+                // If you want a dedicated single page method, switch here when BackImagePath is empty.
+                await _pdfGenerator.GenerateAsync(pdfPath, pair.FrontImagePath, pair.BackImagePath);
+                //    _logger.LogInfo($"PDF generation returned for {pair.DocumentNumber}");
+            }
+            catch (Exception genEx)
+            {
+                _logger.LogError(genEx, $"PDF generation failed for {pair.DocumentNumber} -> {pdfPath}");
+                // ensure the failure is visible to caller and logged
+                throw;
+            }
+
             if (File.Exists(pdfPath))
             {
                 _logger.LogInfo($"PDF created successfully at: {pdfPath}, Size: {new FileInfo(pdfPath).Length} bytes");
@@ -156,27 +208,32 @@ namespace DocumentArchiever.Core.Processing
             else
             {
                 _logger.LogError($"PDF NOT created at: {pdfPath}");
-               // throw new Exception("PDF file was not created");
+                throw new Exception("PDF file was not created");
             }
+
             var document = new Document
             {
                 DocumentNumber = pair.DocumentNumber,
                 FilePath = GetRelativePath(),
                 FileName = $"{pair.DocumentNumber}.pdf",
-                BranchId =_currentSession.BranchId,
+                BranchId = _currentSession.BranchId,
                 DocumentTypeId = _currentSession.DocumentTypeId,
                 Year = _currentSession.StartTime.Year,
                 CreatedAt = DateTime.Now
             };
 
+            _logger.LogInfo($"Attempting to save document metadata to DB for {pair.DocumentNumber}. FilePath: {document.FilePath}, FileName: {document.FileName}");
             bool saved = await _databaseService.SaveDocumentAsync(document);
 
             if (!saved)
             {
+                _logger.LogError($"Database save returned false for {pair.DocumentNumber}");
                 _unidentifiedDocuments.Add(pdfPath);
                 throw new Exception("Failed to save to database");
             }
+            _logger.LogInfo($"Document metadata saved to DB for {pair.DocumentNumber}");
         }
+
 
         private async Task SaveMissedDocumentAsync(DocumentPair pair)
         {
@@ -193,17 +250,7 @@ namespace DocumentArchiever.Core.Processing
 
             await _databaseService.SaveDocumentAsync(document);
         }
-        /*
-        private string GetDocumentSavePath()
-        {
-            return Path.Combine(
-                Properties.Settings.Default.SavePath,
-                _currentSession.StartTime.Year.ToString(),
-                cb//_currentSession.BranchId.ToString(),
-                _currentSession.StartTime.Month.ToString(),
-                _currentSession.StartTime.Day.ToString(),
-                GetDocumentTypeName());
-        }*/
+
         private string GetDocumentSavePath()
         {
             // Get branch name from the selected branch in the UI
@@ -211,7 +258,7 @@ namespace DocumentArchiever.Core.Processing
 
             // Sanitize branch name (remove invalid path characters)
             branchName = SanitizeFolderName(branchName);
-            string ThePath=
+            string ThePath =
              Path.Combine(
                 Properties.Settings.Default.SavePath,
                 _currentSession.StartTime.Year.ToString(),
@@ -247,15 +294,7 @@ namespace DocumentArchiever.Core.Processing
 
             return string.IsNullOrEmpty(name) ? "Unknown" : name;
         }
-        //private string GetRelativePath()
-        //{
-        //    return Path.Combine(
-        //        _currentSession.StartTime.Year.ToString(),
-        //        _currentSession.BranchId.ToString(),
-        //        _currentSession.StartTime.Month.ToString(),
-        //        _currentSession.StartTime.Day.ToString(),
-        //        GetDocumentTypeName());
-        //}
+
         private string GetRelativePath()
         {
             string branchName = _currentSession.BranchName;// cbBranches.Text;
@@ -306,9 +345,20 @@ namespace DocumentArchiever.Core.Processing
 
         public void StopProcessing()
         {
-            _processingCts?.Cancel();
-            _processingQueue?.CompleteAdding();
-            _processingTask?.Wait(5000);
+            try
+            {
+                _logger.LogInfo("StopProcessing called - completing queue and waiting for remaining items to finish");
+                _processingQueue?.CompleteAdding();
+                _processingTask?.Wait(30000);
+            }
+            catch (AggregateException ex)
+            {
+                _logger.LogError(ex, "Error while waiting for processing queue to finish");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error while stopping processing");
+            }
         }
 
         private class DocumentPair

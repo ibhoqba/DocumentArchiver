@@ -13,29 +13,33 @@ namespace DocumentArchiever.Core.Scanning
         private readonly TwainScanner _twainScanner;
         private readonly WiaScanner _wiaScanner;
         private readonly ILogger _logger;
+        private EventHandler<ImageScannedEventArgs> _imageScanned;
+        private EventHandler<ScanProgressEventArgs> _scanProgress;
+        private EventHandler<ScanCompletedEventArgs> _scanCompleted;
+        private EventHandler<ScanErrorEventArgs> _scanError;
 
         public event EventHandler<ImageScannedEventArgs> ImageScanned
         {
-            add { if (_activeScanner != null) _activeScanner.ImageScanned += value; }
-            remove { if (_activeScanner != null) _activeScanner.ImageScanned -= value; }
+            add { _imageScanned += value; }
+            remove { _imageScanned -= value; }
         }
 
         public event EventHandler<ScanProgressEventArgs> ScanProgress
         {
-            add { if (_activeScanner != null) _activeScanner.ScanProgress += value; }
-            remove { if (_activeScanner != null) _activeScanner.ScanProgress -= value; }
+            add { _scanProgress += value; }
+            remove { _scanProgress -= value; }
         }
 
         public event EventHandler<ScanCompletedEventArgs> ScanCompleted
         {
-            add { if (_activeScanner != null) _activeScanner.ScanCompleted += value; }
-            remove { if (_activeScanner != null) _activeScanner.ScanCompleted -= value; }
+            add { _scanCompleted += value; }
+            remove { _scanCompleted -= value; }
         }
 
         public event EventHandler<ScanErrorEventArgs> ScanError
         {
-            add { if (_activeScanner != null) _activeScanner.ScanError += value; }
-            remove { if (_activeScanner != null) _activeScanner.ScanError -= value; }
+            add { _scanError += value; }
+            remove { _scanError -= value; }
         }
 
         public bool IsBusy => _activeScanner?.IsBusy ?? false;
@@ -47,6 +51,9 @@ namespace DocumentArchiever.Core.Scanning
             _logger = logger;
             _twainScanner = new TwainScanner(logger);
             _wiaScanner = new WiaScanner(logger);
+
+            WireScannerEvents(_twainScanner);
+            WireScannerEvents(_wiaScanner);
         }
 
         public async Task<List<ScannerInfo>> GetAvailableScannersAsync()
@@ -79,6 +86,14 @@ namespace DocumentArchiever.Core.Scanning
             }
 
             return result;
+        }
+
+        private void WireScannerEvents(IScanner scanner)
+        {
+            scanner.ImageScanned += (sender, e) => _imageScanned?.Invoke(this, e);
+            scanner.ScanProgress += (sender, e) => _scanProgress?.Invoke(this, e);
+            scanner.ScanCompleted += (sender, e) => _scanCompleted?.Invoke(this, e);
+            scanner.ScanError += (sender, e) => _scanError?.Invoke(this, e);
         }
 
         public async Task DisconnectAsync()

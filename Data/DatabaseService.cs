@@ -89,14 +89,14 @@ namespace DocumentArchiever.Data
 
         public async Task<bool> SaveDocumentAsync(Document document)
         {
-            _logger.LogInfo($"SaveDocumentAsync called for {document.DocumentNumber}");
-            _logger.LogInfo($"=== SAVE DOCUMENT START ===");
-            _logger.LogInfo($"DocumentNumber: {document.DocumentNumber}");
-            _logger.LogInfo($"FilePath: {document.FilePath}");
-            _logger.LogInfo($"FileName: {document.FileName}");
-            _logger.LogInfo($"BranchId: {document.BranchId}");
-            _logger.LogInfo($"DocumentTypeId: {document.DocumentTypeId}");
-            _logger.LogInfo($"Year: {document.Year}");
+            //_logger.LogInfo($"SaveDocumentAsync called for {document.DocumentNumber}");
+            //_logger.LogInfo($"=== SAVE DOCUMENT START ===");
+            //_logger.LogInfo($"DocumentNumber: {document.DocumentNumber}");
+            //_logger.LogInfo($"FilePath: {document.FilePath}");
+            //_logger.LogInfo($"FileName: {document.FileName}");
+            //_logger.LogInfo($"BranchId: {document.BranchId}");
+            //_logger.LogInfo($"DocumentTypeId: {document.DocumentTypeId}");
+            //_logger.LogInfo($"Year: {document.Year}");
 
             const string checkQuery = "SELECT COUNT(1) FROM tblDocArchive WHERE TheNumber = @Number AND BranchID = @BranchId";
             const string insertQuery = @"INSERT INTO tblDocArchive (TheNumber, FilePath, FileName, BranchID, DocType, TheYear, EnterTime) 
@@ -182,7 +182,7 @@ namespace DocumentArchiever.Data
 
         public async Task<int> GetLastDocumentNumberAsync(long branchId, int documentTypeId)
         {
-            object result=null;
+            object result = null;
 
             try
             {
@@ -194,7 +194,7 @@ namespace DocumentArchiever.Data
                 command.Parameters.AddWithValue("@DocType", documentTypeId);
 
                 await connection.OpenAsync();
-                 result = await command.ExecuteScalarAsync();
+                result = await command.ExecuteScalarAsync();
                 return Convert.ToInt32(result);
             }
             catch (Exception ex)
@@ -210,13 +210,55 @@ namespace DocumentArchiever.Data
             // Optional: Log scan sessions for auditing
             return await Task.FromResult(true);
         }
-
+        /*
         public async Task<List<Document>> GetRecentDocumentsAsync(int count)
         {
-            const string query = @"SELECT TOP(@Count) TheNumber, FilePath, FileName, BranchID, DocType, TheYear, EnterTime 
+            const string query = @"SELECT TOP(@Count) [ID], TheNumber, FilePath, FileName, BranchID, DocType, TheYear, EnterTime 
                                    FROM tblDocArchive 
                                    WHERE CAST(EnterTime AS DATE) = CAST(GETDATE() AS DATE)
                                    ORDER BY EnterTime DESC";
+
+            try
+            {
+                var documents = new List<Document>();
+
+                using var connection = new SqlConnection(_connectionString);
+                using var command = new SqlCommand(query, connection);
+                command.Parameters.AddWithValue("@Count", count);
+
+                await connection.OpenAsync();
+                using var reader = await command.ExecuteReaderAsync();
+
+                while (await reader.ReadAsync())
+                {
+                    documents.Add(new Document
+                    {
+                        Id = (int)reader.GetInt64(0),
+                        DocumentNumber = reader.GetInt64(1).ToString(),
+                        FilePath = reader.GetString(2),
+                        FileName = reader.GetString(3),
+                        BranchId = reader.GetInt64(4),
+                        DocumentTypeId = reader.GetInt32(5),
+                        Year = (int)reader.GetInt16(6),
+                        CreatedAt = reader.GetDateTime(7)
+                    });
+                }
+
+                return documents;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"{ex.Message} \n{ex.StackTrace}");
+                throw;
+            }
+        }
+        */
+        public async Task<List<Document>> GetRecentDocumentsAsync(int count)
+        {
+            const string query = @"SELECT TOP(@Count) [ID], TheNumber, FilePath, FileName, BranchID, DocType, TheYear, EnterTime 
+                           FROM tblDocArchive 
+                           WHERE CAST(EnterTime AS DATE) = CAST(GETDATE() AS DATE)
+                           ORDER BY EnterTime DESC";
 
             var documents = new List<Document>();
 
@@ -231,19 +273,19 @@ namespace DocumentArchiever.Data
             {
                 documents.Add(new Document
                 {
-                    DocumentNumber = reader.GetInt64(0).ToString(),
-                    FilePath = reader.GetString(1),
-                    FileName = reader.GetString(2),
-                    BranchId = reader.GetInt32(3),
-                    DocumentTypeId = reader.GetInt32(4),
-                    Year = reader.GetInt32(5),
-                    CreatedAt = reader.GetDateTime(6)
+                    Id = (int)reader.GetInt64(0),
+                    DocumentNumber = reader.IsDBNull(1) ? string.Empty : reader.GetInt64(1).ToString(),
+                    FilePath = reader.IsDBNull(2) ? string.Empty : reader.GetString(2),
+                    FileName = reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+                    BranchId = reader.IsDBNull(4) ? 0 : reader.GetInt64(4),
+                    DocumentTypeId = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
+                    Year = reader.IsDBNull(6) ? 0 : (int)reader.GetInt16(6),
+                    CreatedAt = reader.IsDBNull(7) ? DateTime.MinValue : reader.GetDateTime(7)
                 });
             }
 
             return documents;
         }
-
         public async Task<bool> DeleteDocumentsAsync(List<int> ids)
         {
             using var connection = new SqlConnection(_connectionString);

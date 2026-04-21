@@ -61,6 +61,7 @@ namespace DocumentArchiever.UI.Forms
             statusStrip1 = new StatusStrip();
             statuslbl1 = new ToolStripStatusLabel();
             statuslbl2 = new ToolStripStatusLabel();
+            btnTestQueue = new Button();
             groupBox1.SuspendLayout();
             pnlSearch.SuspendLayout();
             DocGroupBox.SuspendLayout();
@@ -368,9 +369,12 @@ namespace DocumentArchiever.UI.Forms
             txtMissedNumbers.Location = new Point(175, 81);
             txtMissedNumbers.Margin = new Padding(4, 3, 4, 3);
             txtMissedNumbers.Name = "txtMissedNumbers";
+            txtMissedNumbers.PlaceholderText = "«œŒ· «·«—ﬁ«„ «·„›ﬁÊœ…";
+            txtMissedNumbers.RightToLeft = RightToLeft.No;
             txtMissedNumbers.Size = new Size(163, 23);
             txtMissedNumbers.TabIndex = 36;
-            txtMissedNumbers.Text = "«œŒ· «·«—ﬁ«„ «·„›ﬁÊœ…";
+            txtMissedNumbers.Visible = false;
+            txtMissedNumbers.Leave += txtMissedNumbers_Leave;
             // 
             // txtBtwBranch
             // 
@@ -381,6 +385,7 @@ namespace DocumentArchiever.UI.Forms
             txtBtwBranch.TabIndex = 34;
             txtBtwBranch.Text = "1";
             txtBtwBranch.Visible = false;
+            txtBtwBranch.TextChanged += txtStartDocNumber_TextChanged;
             // 
             // cbBtwBranches
             // 
@@ -403,6 +408,7 @@ namespace DocumentArchiever.UI.Forms
             lblDocStartNumber.Size = new Size(105, 15);
             lblDocStartNumber.TabIndex = 32;
             lblDocStartNumber.Text = "—ﬁ„ »œ«Ì… «·„” ‰œ« ";
+            lblDocStartNumber.Visible = false;
             // 
             // txtStartDocNumber
             // 
@@ -412,6 +418,7 @@ namespace DocumentArchiever.UI.Forms
             txtStartDocNumber.Size = new Size(116, 23);
             txtStartDocNumber.TabIndex = 31;
             txtStartDocNumber.Text = "1";
+            txtStartDocNumber.Visible = false;
             txtStartDocNumber.TextChanged += txtStartDocNumber_TextChanged;
             // 
             // cbBranches
@@ -544,11 +551,22 @@ namespace DocumentArchiever.UI.Forms
             statuslbl2.Name = "statuslbl2";
             statuslbl2.Size = new Size(0, 17);
             // 
+            // btnTestQueue
+            // 
+            btnTestQueue.Location = new Point(412, 187);
+            btnTestQueue.Name = "btnTestQueue";
+            btnTestQueue.Size = new Size(75, 23);
+            btnTestQueue.TabIndex = 33;
+            btnTestQueue.Text = "button1";
+            btnTestQueue.UseVisualStyleBackColor = true;
+            btnTestQueue.Click += btnTestQueue_Click;
+            // 
             // MainForm
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(1050, 813);
+            Controls.Add(btnTestQueue);
             Controls.Add(statusStrip1);
             Controls.Add(menuStrip1);
             Controls.Add(btnGetAllExpress);
@@ -636,5 +654,6 @@ namespace DocumentArchiever.UI.Forms
         private System.Windows.Forms.ToolStripStatusLabel statuslbl1;
         private System.Windows.Forms.ToolStripStatusLabel statuslbl2;
         private ToolStripMenuItem tsmiSettings;
+        private Button btnTestQueue;
     }
 }

@@ -1,3 +1,4 @@
+using DocumentArchiever.Services;
 using PdfSharp;
 using PdfSharp.Drawing;
 using PdfSharp.Pdf;
@@ -7,24 +8,39 @@ namespace DocumentArchiever.Core.Processing
 {
     public class PdfGenerator
     {
+
+        public PdfGenerator(ILogger logger)
+        {
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        }
+
+        private readonly ILogger _logger;
+      
         public async Task GenerateAsync(string outputPath, string frontImagePath, string backImagePath)
         {
             await Task.Run(() =>
             {
+
+                _logger.LogInfo($"GenerateAsync START: {outputPath}");
+                _logger.LogInfo($"  Front image: {frontImagePath} (exists: {File.Exists(frontImagePath)})");
+                _logger.LogInfo($"  Back image: {backImagePath} (exists: {File.Exists(backImagePath)})");
                 using (var document = new PdfDocument())
                 {
+                    _logger.LogInfo("Adding Front page...");
                     AddPageToDocument(document, frontImagePath);
 
                     if (!string.IsNullOrEmpty(backImagePath) && File.Exists(backImagePath))
                     {
+                        _logger.LogInfo("Adding back page...");
                         AddPageToDocument(document, backImagePath);
                     }
-
+                    _logger.LogInfo($"Saving PDF to: {outputPath}");
                     document.Save(outputPath);
+                    _logger.LogInfo("PDF saved successfully");
+
                 }
             });
         }
-
         public async Task GenerateSinglePageAsync(string outputPath, string imagePath)
         {
             await Task.Run(() =>

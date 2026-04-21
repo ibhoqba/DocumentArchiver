@@ -1,197 +1,191 @@
-Based on the Claude Code documentation you shared, I will create a comprehensive `CLAUDE.md` file for your Document Archiver project. This file will act as persistent memory for Claude, ensuring it understands the project's architecture, constraints, and workflows across all future sessions.
+# Document Archiver - Claude Project Memory
+
+## 🧭 Purpose
+
+This is a Windows desktop application for document scanning, OCR, PDF generation, and archival into a database.
+
+Claude MUST prioritize:
+- correctness over assumptions
+- reading existing code before modifying behavior
+- preserving current workflows
 
 ---
 
-# `CLAUDE.md` for Document Archiver (Windows Forms / .NET 8)
+## 🏗️ Architecture Overview (IMPORTANT: VERIFY BEFORE USE)
 
-```markdown
-# Document Archiver - Project Memory
+The project is expected to include:
 
-## 🏗️ Project Overview
+- Scanner integration ( TWAIN via NTwain)
+- OCR processing ( Tesseract)
+- PDF generation
+- Database persistence ( SQL Server)
+- WinForms UI
 
-**Document Archiver** is a Windows Forms desktop application for high-volume document scanning and archiving. It integrates with TWAIN scanners, performs OCR using Tesseract, generates PDFs, and stores records in a SQL Server database.
-
-**Target Framework:** .NET 8 (Windows Forms)
-**Primary Language:** C#
-**UI Culture:** Arabic (Right-to-Left layout)
-
-## 📁 Core Architecture
-
-```
-DocumentArchiever/
-├── UI/Forms/           # WinForms UI layer
-├── Core/Scanning/      # TWAIN/WIA scanner abstraction
-├── Core/OCR/           # Tesseract OCR engine wrapper
-├── Core/Processing/    # Document processing & PDF generation
-├── Data/               # Database service & entities
-├── Services/           # Logging, updates, settings
-├── Helpers/            # Image, path, validation utilities
-└── Configuration/      # App settings
-```
-
-## 🔑 Critical Implementation Rules
-
-### 1. NTwain v4 is NOT Async
-Unlike typical .NET async patterns, NTwain v4 uses **synchronous methods** with event-driven callbacks.
-
-```csharp
-// ✅ CORRECT
-_twainSession = new TwainAppSession(appThreadContext: SynchronizationContext.Current);
-_twainSession.OpenDsm();                    // NOT OpenDsmAsync()
-_twainSession.OpenSource(selectedSource);   // NOT OpenSourceAsync()
-_twainSession.EnableSource(SourceEnableOption.NoUI);  // NOT EnableSourceAsync()
-
-// ❌ WRONG - No Async versions exist
-await _twainSession.OpenDsmAsync();  // Compile error!
-```
-
-### 2. Scanner Events Flow
-Always attach event handlers BEFORE opening the DSM:
-
-```csharp
-_twainSession.StateChanged += OnStateChanged;
-_twainSession.Transferred += OnTransferred;      // Each scanned image
-_twainSession.SourceDisabled += OnSourceDisabled; // Scan complete
-_twainSession.TransferError += OnTransferError;
-```
-
-### 3. Image Data Handling
-Use `TakeDataOwnership()` and `AsStream()` to process images:
-
-```csharp
-private void OnTransferred(object sender, TransferredEventArgs e)
-{
-    using (var data = e.TakeDataOwnership())
-    using (var img = Image.FromStream(data.AsStream()))
-    {
-        // Save to temp location first
-        string tempPath = Path.Combine(Path.GetTempPath(), $"scan_{Guid.NewGuid()}.jpg");
-        img.Save(tempPath, ImageFormat.Jpeg);
-        _scannedImages.Add(tempPath);
-    }
-}
-```
-
-### 4. Folder Creation Must Happen BEFORE Scanning
-When `StartScanningAsync` is called, the save directory must already exist:
-
-```csharp
-private ScanSession CreateScanSession()
-{
-    var session = new ScanSession { ... };
-    CreateSessionFolders(session);  // ← CRITICAL: Create now!
-    return session;
-}
-```
-
-### 5. Database Save Flow
-Documents are saved to database **after** PDF generation completes successfully:
-
-```csharp
-// In DocumentProcessor.SaveDocumentAsync:
-await _pdfGenerator.GenerateAsync(pdfPath, frontImage, backImage);
-bool saved = await _databaseService.SaveDocumentAsync(document);
-if (!saved) throw new Exception("DB save failed");
-```
-
-## 🔧 Build & Run Commands
-
-```bash
-# Build solution
-dotnet build DocumentArchiever.sln -c Release
-
-# Run application
-dotnet run --project DocumentArchiever.csproj
-
-# Publish self-contained
-dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
-```
-
-## 🗄️ Database Schema (SQL Server)
-
-Required tables (run on first setup):
-
-```sql
-CREATE TABLE tblBranches (
-    ID INT PRIMARY KEY IDENTITY(1,1),
-    BranchName NVARCHAR(100) NOT NULL
-);
-
-CREATE TABLE tblDocArchive (
-    ID INT PRIMARY KEY IDENTITY(1,1),
-    TheNumber BIGINT NOT NULL,
-    FilePath NVARCHAR(500) NOT NULL,
-    FileName NVARCHAR(200) NOT NULL,
-    BranchID INT NOT NULL,
-    DocType INT NOT NULL,      -- 9=Transfer, 18=Cash, 91=InterBranch
-    TheYear INT NOT NULL,
-    EnterTime DATETIME NOT NULL DEFAULT GETDATE()
-);
-```
-
-## 📝 Coding Standards
-
-- **Naming:** PascalCase for classes/methods, camelCase for parameters
-- **UI Thread:** Use `Control.Invoke()` when updating UI from background threads
-- **Arabic Text:** All UI labels should be in Arabic (RightToLeft = Yes)
-- **Logging:** Use `ILogger` interface, never `Console.WriteLine`
-- **Disposal:** All scanners, OCR engines, and streams must implement `IDisposable`
-
-## 🧪 Testing Checklist for Claude
-
-Before considering a task complete, verify:
-
-1. [ ] Scanner connects and disconnects properly
-2. [ ] Duplex scanning captures both front and back
-3. [ ] Sequential numbering increments correctly for cash documents
-4. [ ] Express numbers (363xxxxxx) are extracted for transfer documents
-5. [ ] PDFs are saved to correct year/branch/date/docType folder
-6. [ ] Database record is created with correct TheNumber, FilePath, FileName
-7. [ ] Settings persist after restart (last branch, last date, DPI, color mode)
-8. [ ] Application exits completely with no background threads hanging
-9. [ ] Progress bar stops after scan completes
-
-## ⚠️ Known Constraints
-
-- **TWAIN only works on Windows** (no Linux/macOS support)
-- **Tesseract language files** (ara.traineddata, eng.traineddata) must be in `./tessdata/`
-- **Ghostscript optional** but recommended for PDF text extraction
-- **.NET 8 required** - will not run on older frameworks
-
-## 🔗 Related Files
-
-- Main scanning logic: `Core/Scanning/TwainScanner.cs`
-- OCR implementation: `Core/OCR/TesseractOcrEngine.cs`
-- Document processing: `Core/Processing/DocumentProcessor.cs`
-- Database operations: `Data/DatabaseService.cs`
-- Main UI: `UI/Forms/MainForm.cs`
-
-## 📚 Imported Guidelines
-
-@README.md
-@docs/CODING_STANDARDS.md
-```
+⚠️ Claude MUST NOT assume exact folder structure.
+Always inspect actual files before referencing paths.
 
 ---
 
-## How to Use This File
+## 🔄 Scanning System Behavior
 
-1. **Save the content above** as `CLAUDE.md` in the **root of your project folder**.
+### Key Constraints
 
-2. **Optional:** To keep it out of version control (for personal settings), save it as `CLAUDE.local.md` instead and add it to `.gitignore`.
+- TWAIN libraries (e.g., NTwain) are typically:
+  - synchronous APIs
+  - event-driven for image transfer
 
-3. **To make Claude load it automatically**, ensure you run Claude Code from the same directory (or a subdirectory). Claude reads `CLAUDE.md` files by walking up the directory tree.
+### HOWEVER:
 
-4. **Verify it's loaded:** In your Claude session, type `/memory` to see which memory files are active.
+Claude MUST verify in code:
 
-## What This File Does
+- Is scanning wrapped in `Task`, `Thread`, or `async` methods?
+- Is there a service layer abstracting scanner logic?
+- Are events marshaled to UI thread?
 
-- Tells Claude your project uses **.NET 8 WinForms** (not a web framework)
-- Explains that **NTwain v4 is synchronous**, preventing Claude from wrongly suggesting `await` on TWAIN methods
-- Documents the **critical folder creation** step that must happen before scanning
-- Provides **build commands** so Claude can test code changes
-- Lists the **database schema** so Claude understands the data layer
-- Includes a **testing checklist** Claude can use to verify fixes
-- Defines **coding standards** for consistent code generation
+### Rule
 
-This file will be loaded at the start of every Claude session, giving Claude persistent memory of your project's unique architecture and constraints.
+❗ DO NOT assume scanning is purely synchronous  
+❗ DO NOT remove async wrappers without checking call chain  
+
+---
+
+## 🧵 Threading & UI Rules
+
+- WinForms requires UI updates on main thread
+- Look for:
+  - `Invoke()`
+  - `BeginInvoke()`
+
+Before modifying:
+- verify how background work is handled
+- avoid introducing cross-thread exceptions
+
+---
+
+## 📂 File & Folder Handling
+
+Claude MUST verify:
+
+- Where scanned images are stored (temp vs final)
+- When folders are created:
+  - before scanning?
+  - during processing?
+- Naming conventions (GUID, sequence, metadata-based)
+
+❗ Do not enforce folder rules unless confirmed in code
+
+---
+
+## 🧾 Document Processing Pipeline
+
+Typical expected flow (VERIFY BEFORE MODIFYING):
+
+1. Scan images (front/back)
+2. Store temporarily
+3. Run OCR
+4. Generate PDF
+5. Save to final storage path
+6. Insert database record
+
+Claude MUST confirm:
+- actual order in code
+- error handling points
+- retry logic (if any)
+
+---
+
+## 🗄️ Database Layer
+
+Claude MUST NOT assume schema.
+
+Before making changes:
+- locate database service/repository
+- identify:
+  - table names
+  - required fields
+  - transaction behavior
+
+Check for:
+- async DB calls
+- error handling
+- connection lifecycle
+
+---
+
+## 🧠 OCR System
+
+Likely uses Tesseract or similar.
+
+Claude MUST verify:
+- language configuration
+- image preprocessing steps
+- where OCR results are stored
+
+---
+
+## ⚙️ Configuration & Settings
+
+Check for:
+- persisted user settings (branch, DPI, scanner)
+- config files (JSON, XML, appsettings)
+- runtime overrides
+
+---
+
+## 🚫 Critical Safety Rules
+
+Claude MUST:
+
+- NEVER rewrite scanning logic blindly
+- NEVER assume method names exist
+- NEVER enforce architecture from documentation alone
+- ALWAYS read actual implementation before suggesting fixes
+
+---
+
+## ✅ Modification Workflow (MANDATORY)
+
+Before any code change:
+
+1. Locate relevant files
+2. Trace execution flow
+3. Identify dependencies
+4. Confirm threading model
+5. Apply minimal change
+
+---
+
+## 🧪 Validation Checklist
+
+After any modification, ensure:
+
+- scanning still triggers correctly
+- no UI freezes or cross-thread errors
+- images are still saved
+- PDF generation still works
+- DB insert still executes
+- no silent failures introduced
+
+---
+
+## 📌 Notes for Claude
+
+If something is unclear:
+
+- ask for the file
+- or request a code snippet
+
+Do NOT guess.
+
+---
+
+## 🔚 Principle
+
+This codebase is **event-driven + IO-heavy (scanner, OCR, DB)**.
+
+Incorrect assumptions will break:
+- scanning flow
+- threading
+- data integrity
+
+Precision is required.

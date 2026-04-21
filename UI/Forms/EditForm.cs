@@ -32,7 +32,7 @@ namespace DocumentArchiever.UI.Forms
         {
             try
             {
-                int count = int.TryParse(TxtLastSavedDocs.Text, out int c) ? c : 10;
+                int count = int.TryParse(TxtLastSavedDocs.Text, out count) ? count : 10;
                 _documents = await _databaseService.GetRecentDocumentsAsync(count);
 
                 dataGridView1.DataSource = _documents;

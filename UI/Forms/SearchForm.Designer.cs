@@ -15,153 +15,180 @@ namespace DocumentArchiever.UI.Forms
 
         private void InitializeComponent()
         {
-            this.cbBranches = new System.Windows.Forms.ComboBox();
-            this.lblExpress = new System.Windows.Forms.Label();
-            this.btnSearch = new System.Windows.Forms.Button();
-            this.txtUniqueNumber = new System.Windows.Forms.TextBox();
-            this.lblErrors = new System.Windows.Forms.Label();
-            this.lblInfo = new System.Windows.Forms.Label();
-            this.IsCashPayment = new System.Windows.Forms.CheckBox();
-            this.tableLayoutPanel1 = new System.Windows.Forms.TableLayoutPanel();
-            this.cbBtwBranches = new System.Windows.Forms.CheckBox();
-            this.webBrowserPdf = new System.Windows.Forms.WebBrowser();
-            this.cmbYears = new System.Windows.Forms.ComboBox();
-            this.groupBox1 = new System.Windows.Forms.GroupBox();
-            this.tableLayoutPanel1.SuspendLayout();
-            this.groupBox1.SuspendLayout();
-            this.SuspendLayout();
-
-            // tableLayoutPanel1
-            this.tableLayoutPanel1.ColumnCount = 2;
-            this.tableLayoutPanel1.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 75F));
-            this.tableLayoutPanel1.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 25F));
-            this.tableLayoutPanel1.Controls.Add(this.cbBranches, 1, 1);
-            this.tableLayoutPanel1.Controls.Add(this.groupBox1, 1, 0);
-            this.tableLayoutPanel1.Controls.Add(this.webBrowserPdf, 0, 1);
-            this.tableLayoutPanel1.Controls.Add(this.lblErrors, 0, 0);
-            this.tableLayoutPanel1.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.tableLayoutPanel1.Location = new System.Drawing.Point(0, 0);
-            this.tableLayoutPanel1.Name = "tableLayoutPanel1";
-            this.tableLayoutPanel1.RowCount = 3;
-            this.tableLayoutPanel1.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 35F));
-            this.tableLayoutPanel1.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 65F));
-            this.tableLayoutPanel1.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 20F));
-            this.tableLayoutPanel1.Size = new System.Drawing.Size(900, 500);
-            this.tableLayoutPanel1.TabIndex = 0;
-
+            cbBranches = new ComboBox();
+            lblExpress = new Label();
+            btnSearch = new Button();
+            txtUniqueNumber = new TextBox();
+            lblErrors = new Label();
+            lblInfo = new Label();
+            IsCashPayment = new CheckBox();
+            tableLayoutPanel1 = new TableLayoutPanel();
+            groupBox1 = new GroupBox();
+            cmbYears = new ComboBox();
+            cbBtwBranches = new CheckBox();
+            webBrowserPdf = new WebBrowser();
+            tableLayoutPanel1.SuspendLayout();
+            groupBox1.SuspendLayout();
+            SuspendLayout();
+            // 
             // cbBranches
-            this.cbBranches.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
-            this.cbBranches.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.cbBranches.FormattingEnabled = true;
-            this.cbBranches.Location = new System.Drawing.Point(678, 171);
-            this.cbBranches.Name = "cbBranches";
-            this.cbBranches.Size = new System.Drawing.Size(219, 21);
-            this.cbBranches.TabIndex = 31;
-
+            // 
+            cbBranches.Dock = DockStyle.Fill;
+            cbBranches.DropDownStyle = ComboBoxStyle.DropDownList;
+            cbBranches.FormattingEnabled = true;
+            cbBranches.Location = new Point(4, 188);
+            cbBranches.Margin = new Padding(4, 3, 4, 3);
+            cbBranches.Name = "cbBranches";
+            cbBranches.Size = new Size(255, 23);
+            cbBranches.TabIndex = 31;
+            // 
             // lblExpress
-            this.lblExpress.AutoSize = true;
-            this.lblExpress.Location = new System.Drawing.Point(142, 16);
-            this.lblExpress.Name = "lblExpress";
-            this.lblExpress.Size = new System.Drawing.Size(76, 13);
-            this.lblExpress.TabIndex = 24;
-            this.lblExpress.Text = "—ﬁ„ «·„” ‰œ";
-
+            // 
+            lblExpress.AutoSize = true;
+            lblExpress.Location = new Point(166, 18);
+            lblExpress.Margin = new Padding(4, 0, 4, 0);
+            lblExpress.Name = "lblExpress";
+            lblExpress.Size = new Size(65, 15);
+            lblExpress.TabIndex = 24;
+            lblExpress.Text = "—ﬁ„ «·„” ‰œ";
+            // 
             // btnSearch
-            this.btnSearch.Location = new System.Drawing.Point(9, 39);
-            this.btnSearch.Name = "btnSearch";
-            this.btnSearch.Size = new System.Drawing.Size(198, 23);
-            this.btnSearch.TabIndex = 22;
-            this.btnSearch.Text = "»ÕÀ";
-            this.btnSearch.UseVisualStyleBackColor = true;
-            this.btnSearch.Click += new System.EventHandler(this.BtnSearch_Click);
-
+            // 
+            btnSearch.Location = new Point(10, 45);
+            btnSearch.Margin = new Padding(4, 3, 4, 3);
+            btnSearch.Name = "btnSearch";
+            btnSearch.Size = new Size(231, 27);
+            btnSearch.TabIndex = 22;
+            btnSearch.Text = "»ÕÀ";
+            btnSearch.UseVisualStyleBackColor = true;
+            btnSearch.Click += BtnSearch_Click;
+            // 
             // txtUniqueNumber
-            this.txtUniqueNumber.Location = new System.Drawing.Point(0, 13);
-            this.txtUniqueNumber.Name = "txtUniqueNumber";
-            this.txtUniqueNumber.Size = new System.Drawing.Size(136, 20);
-            this.txtUniqueNumber.TabIndex = 23;
-
+            // 
+            txtUniqueNumber.Location = new Point(0, 15);
+            txtUniqueNumber.Margin = new Padding(4, 3, 4, 3);
+            txtUniqueNumber.Name = "txtUniqueNumber";
+            txtUniqueNumber.Size = new Size(158, 23);
+            txtUniqueNumber.TabIndex = 23;
+            // 
             // lblErrors
-            this.lblErrors.Dock = System.Windows.Forms.DockStyle.Top;
-            this.lblErrors.ForeColor = System.Drawing.Color.Red;
-            this.lblErrors.Location = new System.Drawing.Point(3, 0);
-            this.lblErrors.Name = "lblErrors";
-            this.lblErrors.Size = new System.Drawing.Size(669, 60);
-            this.lblErrors.TabIndex = 28;
-            this.lblErrors.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
-
+            // 
+            lblErrors.Dock = DockStyle.Top;
+            lblErrors.ForeColor = Color.Red;
+            lblErrors.Location = new Point(267, 0);
+            lblErrors.Margin = new Padding(4, 0, 4, 0);
+            lblErrors.Name = "lblErrors";
+            lblErrors.Size = new Size(779, 69);
+            lblErrors.TabIndex = 28;
+            lblErrors.TextAlign = ContentAlignment.MiddleCenter;
+            // 
             // lblInfo
-            this.lblInfo.Dock = System.Windows.Forms.DockStyle.Bottom;
-            this.lblInfo.Location = new System.Drawing.Point(0, 480);
-            this.lblInfo.Name = "lblInfo";
-            this.lblInfo.Size = new System.Drawing.Size(900, 20);
-            this.lblInfo.TabIndex = 27;
-            this.lblInfo.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
-
+            // 
+            lblInfo.Dock = DockStyle.Bottom;
+            lblInfo.Location = new Point(0, 554);
+            lblInfo.Margin = new Padding(4, 0, 4, 0);
+            lblInfo.Name = "lblInfo";
+            lblInfo.Size = new Size(1050, 23);
+            lblInfo.TabIndex = 27;
+            lblInfo.TextAlign = ContentAlignment.MiddleCenter;
+            // 
             // IsCashPayment
-            this.IsCashPayment.AutoSize = true;
-            this.IsCashPayment.Location = new System.Drawing.Point(63, 62);
-            this.IsCashPayment.Name = "IsCashPayment";
-            this.IsCashPayment.Size = new System.Drawing.Size(102, 17);
-            this.IsCashPayment.TabIndex = 29;
-            this.IsCashPayment.Text = "”‰œ ’—› ‰ﬁœÌ";
-            this.IsCashPayment.UseVisualStyleBackColor = true;
-            this.IsCashPayment.CheckedChanged += new System.EventHandler(this.IsCashPayment_CheckedChanged);
-
+            // 
+            IsCashPayment.AutoSize = true;
+            IsCashPayment.Location = new Point(74, 72);
+            IsCashPayment.Margin = new Padding(4, 3, 4, 3);
+            IsCashPayment.Name = "IsCashPayment";
+            IsCashPayment.Size = new Size(104, 19);
+            IsCashPayment.TabIndex = 29;
+            IsCashPayment.Text = "”‰œ ’—› ‰ﬁœÌ";
+            IsCashPayment.UseVisualStyleBackColor = true;
+            IsCashPayment.CheckedChanged += IsCashPayment_CheckedChanged;
+            // 
+            // tableLayoutPanel1
+            // 
+            tableLayoutPanel1.ColumnCount = 2;
+            tableLayoutPanel1.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 75F));
+            tableLayoutPanel1.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+            tableLayoutPanel1.Controls.Add(cbBranches, 1, 1);
+            tableLayoutPanel1.Controls.Add(groupBox1, 1, 0);
+            tableLayoutPanel1.Controls.Add(webBrowserPdf, 0, 1);
+            tableLayoutPanel1.Controls.Add(lblErrors, 0, 0);
+            tableLayoutPanel1.Dock = DockStyle.Fill;
+            tableLayoutPanel1.Location = new Point(0, 0);
+            tableLayoutPanel1.Margin = new Padding(4, 3, 4, 3);
+            tableLayoutPanel1.Name = "tableLayoutPanel1";
+            tableLayoutPanel1.RowCount = 3;
+            tableLayoutPanel1.RowStyles.Add(new RowStyle(SizeType.Percent, 35F));
+            tableLayoutPanel1.RowStyles.Add(new RowStyle(SizeType.Percent, 65F));
+            tableLayoutPanel1.RowStyles.Add(new RowStyle(SizeType.Absolute, 23F));
+            tableLayoutPanel1.Size = new Size(1050, 554);
+            tableLayoutPanel1.TabIndex = 0;
+            // 
             // groupBox1
-            this.groupBox1.Controls.Add(this.cmbYears);
-            this.groupBox1.Controls.Add(this.cbBtwBranches);
-            this.groupBox1.Controls.Add(this.lblExpress);
-            this.groupBox1.Controls.Add(this.IsCashPayment);
-            this.groupBox1.Controls.Add(this.txtUniqueNumber);
-            this.groupBox1.Controls.Add(this.btnSearch);
-            this.groupBox1.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.groupBox1.Location = new System.Drawing.Point(678, 3);
-            this.groupBox1.Name = "groupBox1";
-            this.groupBox1.Size = new System.Drawing.Size(219, 162);
-            this.groupBox1.TabIndex = 28;
-            this.groupBox1.TabStop = false;
-            this.groupBox1.Text = "„⁄«ÌÌ— «·»ÕÀ";
-
-            // cbBtwBranches
-            this.cbBtwBranches.AutoSize = true;
-            this.cbBtwBranches.Location = new System.Drawing.Point(63, 85);
-            this.cbBtwBranches.Name = "cbBtwBranches";
-            this.cbBtwBranches.Size = new System.Drawing.Size(145, 17);
-            this.cbBtwBranches.TabIndex = 34;
-            this.cbBtwBranches.Text = "”‰œ«  ’—› »Ì‰ «·›—Ê⁄";
-            this.cbBtwBranches.UseVisualStyleBackColor = true;
-            this.cbBtwBranches.CheckedChanged += new System.EventHandler(this.cbBtwBranches_CheckedChanged);
-
-            // webBrowserPdf
-            this.webBrowserPdf.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.webBrowserPdf.Location = new System.Drawing.Point(3, 171);
-            this.webBrowserPdf.MinimumSize = new System.Drawing.Size(20, 20);
-            this.webBrowserPdf.Name = "webBrowserPdf";
-            this.webBrowserPdf.Size = new System.Drawing.Size(669, 306);
-            this.webBrowserPdf.TabIndex = 27;
-
+            // 
+            groupBox1.Controls.Add(cmbYears);
+            groupBox1.Controls.Add(cbBtwBranches);
+            groupBox1.Controls.Add(lblExpress);
+            groupBox1.Controls.Add(IsCashPayment);
+            groupBox1.Controls.Add(txtUniqueNumber);
+            groupBox1.Controls.Add(btnSearch);
+            groupBox1.Dock = DockStyle.Fill;
+            groupBox1.Location = new Point(4, 3);
+            groupBox1.Margin = new Padding(4, 3, 4, 3);
+            groupBox1.Name = "groupBox1";
+            groupBox1.Padding = new Padding(4, 3, 4, 3);
+            groupBox1.Size = new Size(255, 179);
+            groupBox1.TabIndex = 28;
+            groupBox1.TabStop = false;
+            groupBox1.Text = "„⁄«ÌÌ— «·»ÕÀ";
+            // 
             // cmbYears
-            this.cmbYears.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
-            this.cmbYears.FormattingEnabled = true;
-            this.cmbYears.Location = new System.Drawing.Point(53, 112);
-            this.cmbYears.Name = "cmbYears";
-            this.cmbYears.Size = new System.Drawing.Size(121, 21);
-            this.cmbYears.TabIndex = 35;
-
+            // 
+            cmbYears.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbYears.FormattingEnabled = true;
+            cmbYears.Location = new Point(62, 129);
+            cmbYears.Margin = new Padding(4, 3, 4, 3);
+            cmbYears.Name = "cmbYears";
+            cmbYears.Size = new Size(140, 23);
+            cmbYears.TabIndex = 35;
+            // 
+            // cbBtwBranches
+            // 
+            cbBtwBranches.AutoSize = true;
+            cbBtwBranches.Location = new Point(74, 98);
+            cbBtwBranches.Margin = new Padding(4, 3, 4, 3);
+            cbBtwBranches.Name = "cbBtwBranches";
+            cbBtwBranches.Size = new Size(142, 19);
+            cbBtwBranches.TabIndex = 34;
+            cbBtwBranches.Text = "”‰œ«  ’—› »Ì‰ «·›—Ê⁄";
+            cbBtwBranches.UseVisualStyleBackColor = true;
+            cbBtwBranches.CheckedChanged += cbBtwBranches_CheckedChanged;
+            // 
+            // webBrowserPdf
+            // 
+            webBrowserPdf.Dock = DockStyle.Fill;
+            webBrowserPdf.Location = new Point(267, 188);
+            webBrowserPdf.Margin = new Padding(4, 3, 4, 3);
+            webBrowserPdf.MinimumSize = new Size(23, 23);
+            webBrowserPdf.Name = "webBrowserPdf";
+            webBrowserPdf.Size = new Size(779, 339);
+            webBrowserPdf.TabIndex = 27;
+            // 
             // SearchForm
-            this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
-            this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(900, 500);
-            this.Controls.Add(this.tableLayoutPanel1);
-            this.Controls.Add(this.lblInfo);
-            this.Name = "SearchForm";
-            this.RightToLeft = System.Windows.Forms.RightToLeft.Yes;
-            this.Text = "«·»ÕÀ ⁄‰ „” ‰œ";
-            this.tableLayoutPanel1.ResumeLayout(false);
-            this.groupBox1.ResumeLayout(false);
-            this.groupBox1.PerformLayout();
-            this.ResumeLayout(false);
+            // 
+            AutoScaleDimensions = new SizeF(7F, 15F);
+            AutoScaleMode = AutoScaleMode.Font;
+            ClientSize = new Size(1050, 577);
+            Controls.Add(tableLayoutPanel1);
+            Controls.Add(lblInfo);
+            Margin = new Padding(4, 3, 4, 3);
+            Name = "SearchForm";
+            RightToLeft = RightToLeft.Yes;
+            Text = "«·»ÕÀ ⁄‰ „” ‰œ";
+            tableLayoutPanel1.ResumeLayout(false);
+            groupBox1.ResumeLayout(false);
+            groupBox1.PerformLayout();
+            ResumeLayout(false);
         }
 
         private System.Windows.Forms.ComboBox cbBranches;
